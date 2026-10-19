@@ -27,7 +27,8 @@ export function prepareCharacterDefinition(def, referenceNodeId, keys) {
         stylePrompt: refs.data.characterStyle ?? doc.style?.style_prompt_en ?? '',
         model: refs.data.characterModel || 'GEM_PIX_2', ratio: refs.data.characterRatio || '1:1' };
     characterEntries(data);
-    if (!['GEM_PIX_2','NARWHAL','HARBOR_SEAL'].includes(data.model)) throw new Error('Model nhân vật không hợp lệ.');
+    if (data.model === 'NARWHAL') data.model = 'BELUGA';
+    if (!['GEM_PIX_2','BELUGA','HARBOR_SEAL'].includes(data.model)) throw new Error('Model nhân vật không hợp lệ.');
     const nodes = entries.map((entry, index) => ({ id: `character_${index}`, type: 'character-generator', data: { ...data, entries: [entry] } }));
     const edges = nodes.slice(1).map((node, i) => ({ id: `sequence_${i}`, source: nodes[i].id, target: node.id, sourceHandle: 'image-out', targetHandle: 'image-in' }));
     return { definition: { ...def, nodes, edges }, entries };

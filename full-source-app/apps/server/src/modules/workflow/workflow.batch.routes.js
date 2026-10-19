@@ -33,7 +33,7 @@ const createBatchSchema = z.object({
         .min(1),
 });
 const batchParallelSchema = z.object({
-    imageModelKey: z.enum(['GEM_PIX_2', 'NARWHAL', 'HARBOR_SEAL']).optional(),
+    imageModelKey: z.enum(['GEM_PIX_2', 'BELUGA', 'HARBOR_SEAL', 'NARWHAL']).optional(),
     concurrency: z.number().int().min(1).max(8),
     restSeconds: z.number().min(1).max(180),
     burst: z.number().int().min(1).max(4),

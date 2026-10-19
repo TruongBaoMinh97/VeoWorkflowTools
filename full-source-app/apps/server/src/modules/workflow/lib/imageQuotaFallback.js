@@ -1,7 +1,7 @@
 import { NonRetryableNodeError } from '../engine/WorkflowNodeError.js';
 
-export const IMAGE_FALLBACK_MODELS = ['GEM_PIX_2', 'NARWHAL', 'HARBOR_SEAL'];
-export const IMAGE_MODEL_LABELS = { GEM_PIX_2: 'Nano Banana Pro', NARWHAL: 'Nano Banana 2', HARBOR_SEAL: 'Nano Banana 2 Lite' };
+export const IMAGE_FALLBACK_MODELS = ['GEM_PIX_2', 'BELUGA', 'HARBOR_SEAL'];
+export const IMAGE_MODEL_LABELS = { GEM_PIX_2: 'Nano Banana Pro', BELUGA: 'Nano Banana 2.1', HARBOR_SEAL: 'Nano Banana 2 Lite' };
 // A process-local cooldown, not a claim about the provider's reset time.
 export const imageQuotaCooldowns = new Map();
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;

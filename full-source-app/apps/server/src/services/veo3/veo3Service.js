@@ -2193,7 +2193,7 @@ export class Veo3Service {
                     logger.info(`[Batch Images] body meta seed=${seed} model=${options.imageModelName} aspect=${aspectRatio} promptLen=${promptText.length} project=${options.projectId} batchId=${batchId}`);
                 }
                 // \u23f1\ufe0f Image gen API timeout \u2014 default 120s, override via env
-                // IMAGE_GEN_TIMEOUT_MS. GEM_PIX_2 normal ~10-15s, NARWHAL multi-ref
+                // IMAGE_GEN_TIMEOUT_MS. GEM_PIX_2 normal ~10-15s, BELUGA multi-ref
                 // ~30-60s. Bumped 120s \u2192 240s sau khi th\u1ea5y Google response peak load
                 // c\u00f3 th\u1ec3 >120s (timeout 125s = 120 + 5s host overhead \u2192 fail oan request
                 // h\u1ee3p l\u1ec7 ch\u1eadm). 240s ceiling absorbs slow lane while still capping

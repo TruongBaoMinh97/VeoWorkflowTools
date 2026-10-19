@@ -39,7 +39,7 @@ export const multiStoryQueue=new MultiStoryQueue({
 const multiBody=z.object({
     name:z.string().trim().min(1).max(150).optional(),workflowId:z.string().min(1),profileIds:z.array(z.string().min(1)).min(1).max(50),
     fields:z.object({outputDir:z.string().min(1),referencePath:z.string().min(1),style:z.string().trim().min(1),characterDescription:z.string().trim().min(1)}),
-    imageModelKey:z.enum(['GEM_PIX_2','NARWHAL','HARBOR_SEAL']),concurrency:z.number().int().min(1).max(12),batchSize:z.number().int().min(1).max(4),delaySeconds:z.number().int().min(1).max(180),
+    imageModelKey:z.enum(['GEM_PIX_2','BELUGA','HARBOR_SEAL','NARWHAL']),concurrency:z.number().int().min(1).max(12),batchSize:z.number().int().min(1).max(4),delaySeconds:z.number().int().min(1).max(180),
     items:z.array(z.object({name:z.string().trim().min(1).max(200),txtPath:z.string().min(1),srtPath:z.string().min(1),audioPath:z.string().min(1)})).min(1).max(100),
 });
 const capcutTasks = new Map();

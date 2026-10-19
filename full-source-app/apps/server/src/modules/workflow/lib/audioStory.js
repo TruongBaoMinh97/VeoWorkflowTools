@@ -41,7 +41,8 @@ export function sharedConfiguration(def) {
     if (!library[key]?.path || library[key].reviewStatus !== 'approved') throw Error('Chọn và duyệt ảnh nhân vật trước khi chạy.');
     const style = String(refs.data.sharedStyle ?? refs.data.document?.style?.style_prompt_en ?? '').trim();
     if (!style) throw Error('Nhập style chung.');
-    if (!['GEM_PIX_2','NARWHAL','HARBOR_SEAL'].includes(image.data.model)) throw Error('Chọn model tạo ảnh hỗ trợ tham chiếu.');
+    if (image.data.model === 'NARWHAL') image.data.model = 'BELUGA';
+    if (!['GEM_PIX_2','BELUGA','HARBOR_SEAL'].includes(image.data.model)) throw Error('Chọn model tạo ảnh hỗ trợ tham chiếu.');
     const options = { model:image.data.model, maxReferences:refs.data.maxReferences || 8, referenceLimitVerified:refs.data.referenceLimitVerified === true && refs.data.verifiedModel === image.data.model };
     return {input, refs, image, character, outfit, key, style, library, options};
 }

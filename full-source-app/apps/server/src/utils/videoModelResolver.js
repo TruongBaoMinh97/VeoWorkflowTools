@@ -35,7 +35,7 @@ function normalizeOmniFlashDuration(duration) {
  */
 export const IMAGE_GENERATION_MODELS = {
     GEM_PIX_2: 'GEM_PIX_2', // 🍌 Nano Banana Pro
-    NARWHAL: 'NARWHAL', // 🍌 Nano Banana 2 (Google API default)
+    BELUGA: 'BELUGA', // 🍌 Nano Banana 2.1
     HARBOR_SEAL: 'HARBOR_SEAL', // 🍌 Nano Banana 2 Lite
 };
 /**
@@ -44,6 +44,10 @@ export const IMAGE_GENERATION_MODELS = {
  * so old projects/flows never submit an invalid model to the Flow API.
  */
 export function normalizeImageModelKey(key) {
+    // Flow replaced Nano Banana 2 (NARWHAL) with Nano Banana 2.1 (BELUGA).
+    // Migrate saved workflows instead of silently falling back to Pro.
+    if (key === 'NARWHAL')
+        return 'BELUGA';
     // Own-property check (not `in`) so prototype-chain keys like 'constructor'/'__proto__'
     // don't slip through and get sent verbatim to the Flow API.
     return key != null && Object.prototype.hasOwnProperty.call(IMAGE_GENERATION_MODELS, key)
@@ -252,7 +256,7 @@ export function getAvailableImageModels() {
     // Key được truyền verbatim tới Google làm `imageModelName` (không có bảng map).
     return [
         { key: 'GEM_PIX_2', displayName: '🍌 Nano Banana Pro' },
-        { key: 'NARWHAL', displayName: '🍌 Nano Banana 2' },
+        { key: 'BELUGA', displayName: '🍌 Nano Banana 2.1' },
         { key: 'HARBOR_SEAL', displayName: '🍌 Nano Banana 2 Lite' },
     ];
 }

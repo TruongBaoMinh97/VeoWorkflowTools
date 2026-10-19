@@ -8,10 +8,10 @@ describe('image model quota fallback', () => {
         const generate = vi.fn().mockRejectedValueOnce(quota()).mockResolvedValue(['image']);
         const onModel = vi.fn();
         const result = await fallback(setup({ generate, onModel }));
-        expect(generate.mock.calls.map(call => call[0])).toEqual(['GEM_PIX_2', 'NARWHAL']);
+        expect(generate.mock.calls.map(call => call[0])).toEqual(['GEM_PIX_2', 'BELUGA']);
         expect(result.value).toEqual(['image']);
-        expect(result.actualImageModel).toBe('NARWHAL');
-        expect(onModel.mock.calls[1][0].quotaFallbackNotice).toContain('Nano Banana Pro hết quota → Nano Banana 2');
+        expect(result.actualImageModel).toBe('BELUGA');
+        expect(onModel.mock.calls[1][0].quotaFallbackNotice).toContain('Nano Banana Pro hết quota → Nano Banana 2.1');
     });
     it.each(['429 RESOURCE_EXHAUSTED', 'reCAPTCHA evaluation failed', 'PUBLIC_ERROR_USER_QUOTA_REACHED', 'PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED_UPGRADEABLE', 'PUBLIC_ERROR_HIGH_TRAFFIC', 'PUBLIC_ERROR_SEXUAL', 'network timeout'])(
         'does not change models for %s', async message => {
@@ -24,7 +24,7 @@ describe('image model quota fallback', () => {
         const args = setup({ cooldowns, now: () => time });
         await fallback({ ...args, generate: vi.fn().mockRejectedValueOnce(quota()).mockResolvedValue(['image']) });
         const generate = vi.fn().mockResolvedValue(['image']);
-        await fallback({ ...args, generate }); expect(generate.mock.calls[0][0]).toBe('NARWHAL');
+        await fallback({ ...args, generate }); expect(generate.mock.calls[0][0]).toBe('BELUGA');
         await fallback({ ...args, profileId: 'other', generate }); expect(generate.mock.calls[1][0]).toBe('GEM_PIX_2');
         time = 24 * 60 * 60 * 1000;
         await fallback({ ...args, generate }); expect(generate.mock.calls[2][0]).toBe('GEM_PIX_2');
@@ -38,10 +38,10 @@ describe('image model quota fallback', () => {
         await new Promise(resolve => setImmediate(resolve));
         await fallback(setup({ cooldowns, generate: vi.fn().mockRejectedValueOnce(quota()).mockResolvedValue(['image']) }));
         launch();
-        expect((await waiting).actualImageModel).toBe('NARWHAL');
+        expect((await waiting).actualImageModel).toBe('BELUGA');
     });
     it('honors order, opt-out and deduplicates invalid model names', async () => {
-        expect(imageModelOrder('GEM_PIX_2', true, ['HARBOR_SEAL', 'bad', 'HARBOR_SEAL', 'NARWHAL'])).toEqual(['GEM_PIX_2', 'HARBOR_SEAL', 'NARWHAL']);
+        expect(imageModelOrder('GEM_PIX_2', true, ['HARBOR_SEAL', 'bad', 'HARBOR_SEAL', 'BELUGA'])).toEqual(['GEM_PIX_2', 'HARBOR_SEAL', 'BELUGA']);
         const generate = vi.fn().mockRejectedValue(quota());
         await expect(fallback(setup({ enabled: false, generate }))).rejects.toMatchObject({ code: 'IMAGE_MODELS_QUOTA_EXHAUSTED' });
         expect(generate).toHaveBeenCalledTimes(1);

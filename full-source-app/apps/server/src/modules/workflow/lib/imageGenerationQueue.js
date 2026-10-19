@@ -101,7 +101,7 @@ export function defaultImagesPerProduct(def) {
  return productFolder?4:configured;
 }
 export function normalizeParallel(value) {
- const concurrency=Number(value?.concurrency ?? 8),restSeconds=Number(value?.restSeconds ?? 10),burst=Number(value?.burst ?? 4),imagesPerProduct=Number(value?.imagesPerProduct ?? 1),imageModelKey=String(value?.imageModelKey || 'GEM_PIX_2');
- if(!Number.isInteger(concurrency)||concurrency<1||concurrency>8||!Number.isFinite(restSeconds)||restSeconds<1||restSeconds>180||!Number.isInteger(burst)||burst<1||burst>4||!Number.isInteger(imagesPerProduct)||imagesPerProduct<1||imagesPerProduct>4||!['GEM_PIX_2','NARWHAL','HARBOR_SEAL'].includes(imageModelKey))throw Error('Cấu hình batch: model ảnh hợp lệ, 1–8 luồng, nghỉ sau đợt 1–180 giây, 1–4 sản phẩm/đợt và 1–4 ảnh/sản phẩm.');
+ const concurrency=Number(value?.concurrency ?? 8),restSeconds=Number(value?.restSeconds ?? 10),burst=Number(value?.burst ?? 4),imagesPerProduct=Number(value?.imagesPerProduct ?? 1),storedImageModelKey=String(value?.imageModelKey || 'GEM_PIX_2'),imageModelKey=storedImageModelKey==='NARWHAL'?'BELUGA':storedImageModelKey;
+ if(!Number.isInteger(concurrency)||concurrency<1||concurrency>8||!Number.isFinite(restSeconds)||restSeconds<1||restSeconds>180||!Number.isInteger(burst)||burst<1||burst>4||!Number.isInteger(imagesPerProduct)||imagesPerProduct<1||imagesPerProduct>4||!['GEM_PIX_2','BELUGA','HARBOR_SEAL'].includes(imageModelKey))throw Error('Cấu hình batch: model ảnh hợp lệ, 1–8 luồng, nghỉ sau đợt 1–180 giây, 1–4 sản phẩm/đợt và 1–4 ảnh/sản phẩm.');
  return {imageModelKey,concurrency,restSeconds,burst,imagesPerProduct};
 }

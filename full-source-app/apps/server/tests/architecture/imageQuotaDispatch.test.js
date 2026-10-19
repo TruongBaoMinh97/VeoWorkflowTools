@@ -28,8 +28,8 @@ it('engine dispatch preserves all image inputs, routes progress and stores actua
     expect(second.prompts).toHaveLength(4);
     expect(second.prompts[0]).toEqual({ prompt: 'original prompt', seed: 12, referenceImageMediaIds: ['reference'] });
     expect(second.imageAspectRatio).toBe('3:4'); expect(second.projectId).toBe('project');
-    expect(second.imageModelName).toBe('NARWHAL');
+    expect(second.imageModelName).toBe('BELUGA');
     expect(onModel).toHaveBeenCalledTimes(2);
-    expect(result.results[0].imageModel).toBe('NARWHAL');
+    expect(result.results[0].imageModel).toBe('BELUGA');
     expect(result.imageModelMetadata.quotaFallbackHistory).toHaveLength(1);
 });
