@@ -8341,6 +8341,16 @@ const z4 = ({
                         t.error.includes("HIGH_TRAFFIC") ||
                         t.error.startsWith("RATE_LIMIT_RETRY:");
                     if (t.error.startsWith(lx)) return null;
+                    if (t.error.startsWith("FLOW_VERIFICATION_REQUIRED:") ||
+                        /PUBLIC_ERROR_UNUSUAL_ACTIVITY(?![A-Z_])|reCAPTCHA evaluation failed/.test(t.error)) {
+                      return e.jsxs("div", {
+                        className: "mt-1 text-[10px] bg-amber-50 border border-amber-200 rounded px-2 py-1.5",
+                        children: [
+                          e.jsx("div", { className: "font-medium text-amber-800", children: "Cần xác minh trên Google Flow" }),
+                          e.jsx("div", { className: "text-amber-700", children: "Google từ chối xác minh reCAPTCHA (403). Mở Google Flow, kiểm tra đăng nhập và hoàn tất xác minh nếu được yêu cầu, sau đó bấm Gen lại." }),
+                        ],
+                      });
+                    }
                     if (U) {
                       const q = I ? t.error.slice(I.length).trim() : void 0;
                       return e.jsxs("div", {

@@ -14,6 +14,7 @@ import { accountLocaleService } from '../../../lib/accountLocaleService.js';
 import { captchaManager } from '../../../lib/captchaManager.js';
 import { sessionIdManager } from '../../../lib/sessionIdManager.js';
 import { normalizeImageModelKey } from '../../../utils/videoModelResolver.js';
+import { isVerificationRejected, verificationRequiredError } from '../../../services/veo3/verificationFailure.js';
 export class GenNormalJobHandler extends BaseJobHandler {
     getJobType() {
         return JobType.GEN_NORMAL;
@@ -143,6 +144,8 @@ export class GenNormalJobHandler extends BaseJobHandler {
             return result;
         }
         catch (error) {
+            if (isVerificationRejected(error))
+                throw verificationRequiredError(error);
             // reCAPTCHA 403: escalate failure to the global captcha manager which
             // schedules a soft_reset (strip _grecaptcha storage) → hard_reset
             // (navigate Flow tab → back) on the next extension poll. Proxy rotation
@@ -263,6 +266,8 @@ export class GenNormalJobHandler extends BaseJobHandler {
         };
     }
     canRetry(job, error) {
+        if (isVerificationRejected(error))
+            return false;
         // Fail fast for jobs intentionally rejected by execute() (e.g. recovered
         // video-mode rows that shouldn't reach this handler).
         if (error?.nonRetryable === true)

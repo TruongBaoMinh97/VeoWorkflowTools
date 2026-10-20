@@ -7,6 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { logger, runtimeVerboseLogsEnabled } from "../../lib/logger.js";
 import { parseVeo3Error, isNonRetryableError } from "./veo3ErrorHandler.js";
+import { isVerificationRejected, verificationRequiredError } from "./verificationFailure.js";
 import { cookieTokenService } from "../../lib/cookieTokenService.js";
 import { captchaManager } from "../../lib/captchaManager.js";
 import { buildProxyUrl } from "../../utils/proxyUtils.js";
@@ -497,6 +498,10 @@ export class Veo3Service {
         }
         catch (error) {
             // Check if it's an auth error and we have cookies to refresh
+            if (isVerificationRejected(error)) {
+                logger.warn('[Flow] Verification rejected; waiting for user verification on Google Flow.');
+                throw verificationRequiredError(error);
+            }
             if (retryOnAuthError && this.config.cookies && error?.response) {
                 const response = error.response;
                 const errorText = error.errorText || "";
@@ -543,6 +548,8 @@ export class Veo3Service {
                             return await apiCall();
                         }
                         catch (retryError) {
+                            if (isVerificationRejected(retryError))
+                                throw verificationRequiredError(retryError);
                             const retryErrorText = retryError?.errorText || "";
                             // Check if retry error is reCAPTCHA failure (NOT an auth error)
                             const { isRecaptchaEvaluationFailure } = await import("./veo3ErrorHandler.js");
@@ -576,6 +583,8 @@ export class Veo3Service {
                         }
                     }
                     catch (refreshError) {
+                        if (isVerificationRejected(refreshError))
+                            throw verificationRequiredError(refreshError);
                         logger.error("❌ Failed to refresh access token:", refreshError);
                         throw new Error("Access token đã hết hạn và không thể refresh từ cookies. Vui lòng cập nhật cookies trong Profile Manager.");
                     }

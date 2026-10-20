@@ -1,3 +1,4 @@
+import { isVerificationRejected, VERIFICATION_REQUIRED_MESSAGE } from './verificationFailure.js';
 /**
  * Veo3 Error Handler
  * Parses Veo3 API error responses and returns user-friendly error messages
@@ -39,6 +40,8 @@ export function parseVeo3Error(errorText, defaultMessage) {
     if (!errorText) {
         return defaultMessage || 'Đã xảy ra lỗi không xác định';
     }
+    if (isVerificationRejected(errorText))
+        return VERIFICATION_REQUIRED_MESSAGE;
     let jsonStr = errorText;
     const jsonMatch = errorText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -232,6 +235,8 @@ export function isAlreadyInProgressError(errorText) {
 export function isRecaptchaEvaluationFailure(errorText) {
     if (!errorText)
         return false;
+    if (isVerificationRejected(errorText))
+        return true;
     try {
         const errorJson = JSON.parse(errorText);
         const error = errorJson.error;
@@ -269,6 +274,8 @@ export function isRetryableError(errorText) {
     if (!errorText) {
         return false; // Unknown error = not retryable
     }
+    if (isVerificationRejected(errorText))
+        return false;
     const lowerError = errorText.toLowerCase();
     // HTTP status codes that indicate rate limiting
     if (lowerError.includes('429') ||
@@ -333,6 +340,8 @@ export function isRetryableError(errorText) {
  */
 export function isNonRetryableError(errorText) {
     if (!errorText)
+        return true;
+    if (isVerificationRejected(errorText))
         return true;
     const lowerError = errorText.toLowerCase();
     // Content policy and safety errors - NEVER RETRY
@@ -433,6 +442,8 @@ export function getFailedJobDisplayMessage(errorText) {
     if (!errorText) {
         return 'Video generation thất bại. Vui lòng kiểm tra prompt và ảnh, sau đó thử gen lại.';
     }
+    if (isVerificationRejected(errorText))
+        return VERIFICATION_REQUIRED_MESSAGE;
     // Try to parse and get a proper message
     const parsedMessage = parseVeo3Error(errorText);
     // If we got a meaningful message, return it

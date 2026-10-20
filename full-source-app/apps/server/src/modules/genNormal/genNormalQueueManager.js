@@ -15,6 +15,7 @@ import { isNonRetryableError, isRetryableError, getFailedJobDisplayMessage, isHa
 import { concurrentProfileLimit } from '../../lib/concurrentProfileLimit.js';
 import { captchaManager } from '../../lib/captchaManager.js';
 import { sessionIdManager } from '../../lib/sessionIdManager.js';
+import { isVerificationRejected, VERIFICATION_REQUIRED_MESSAGE } from '../../services/veo3/verificationFailure.js';
 import { buildHandleMap, clampTextParts, tokenizePrompt } from '../../utils/referenceHandles.js';
 /**
  * Returns true when the Chrome captcha-bridge extension is the captcha source
@@ -2534,6 +2535,10 @@ class GenNormalQueueManager {
                         });
                     }
                     catch (batchError) {
+                        if (isVerificationRejected(batchError)) {
+                            await this.failJobsForVerification(queuedJob, batchJobs);
+                            return;
+                        }
                         // Handle batch API error - decide FAILED or RETRY for all jobs in batch
                         const errorMessage = batchError.message || 'Unknown batch error';
                         const isUpgradeable = errorMessage.includes('PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED_UPGRADEABLE');
@@ -3427,6 +3432,10 @@ class GenNormalQueueManager {
                     }
                 }
                 catch (batchError) {
+                    if (isVerificationRejected(batchError)) {
+                        await this.failJobsForVerification(queuedJob, batchJobs);
+                        return;
+                    }
                     // Handle batch API error - decide FAILED or RETRY for all jobs in batch
                     const errorMessage = batchError.message || 'Unknown batch error';
                     const isUpgradeable = errorMessage.includes('PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED_UPGRADEABLE');
@@ -3788,6 +3797,10 @@ class GenNormalQueueManager {
         }
         catch (error) {
             // Extract detailed error message
+            if (isVerificationRejected(error)) {
+                await this.failJobsForVerification(queuedJob, this.currentBatchJobs.get(queuedJob.jobId));
+                return;
+            }
             let errorMessage = 'Unknown error';
             if (error.message) {
                 errorMessage = error.message;
@@ -4553,9 +4566,25 @@ class GenNormalQueueManager {
     }
     // Note: pollJobsStatus() method has been removed - status polling is now handled by GenNormalStatusPoller
     // See: core/queue/GenNormalStatusPoller.ts
-    /**
-     * Update project statistics
-     */
+    /** Stop only the rejected jobs and retain the actionable provider error. */
+    async failJobsForVerification(queuedJob, batchJobs) {
+        const jobs = batchJobs?.length ? batchJobs : [queuedJob];
+        for (const job of jobs) {
+            await prisma.genNormalJob.update({
+                where: { id: job.jobId },
+                data: { status: 'FAILED', error: VERIFICATION_REQUIRED_MESSAGE, completedAt: new Date(), progress: 0 },
+            });
+            const queue = this.profileQueues.get(job.profileId);
+            if (queue) {
+                queue.runningJobs.delete(job.jobId);
+                queue.queuedJobs = queue.queuedJobs.filter(pending => pending.jobId !== job.jobId);
+            }
+        }
+        this.currentBatchJobs.delete(queuedJob.jobId);
+        logger.warn(`[GenNormal] Verification rejected; ${jobs.length} job(s) stopped pending user action on Google Flow.`);
+        await this.updateProjectStats(queuedJob.projectId);
+    }
+    /** Update project statistics. */
     async updateProjectStats(projectId) {
         // ⚡ Memory optim: dùng groupBy thay vì findMany. findMany load TẤT CẢ row vào RAM
         // (1000+ jobs × N project × N call/giây → memory spike). groupBy chỉ trả 3-5 row count
