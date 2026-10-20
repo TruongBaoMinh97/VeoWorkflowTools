@@ -47,7 +47,7 @@ describe('alternative knit beanie Etsy workflow preset', () => {
         expect(image.data).toEqual({
             imageMode: 'image-to-image',
             model: 'GEM_PIX_2',
-            ratio: '3:4',
+            ratio: '1:1',
             count: 1,
             contentFallback: 'none',
         });
@@ -80,7 +80,7 @@ describe('alternative knit beanie Etsy workflow preset', () => {
         expect(prompt).toContain('sole source of truth');
         expect(prompt).toContain('Do not transfer a cross, symbol, stripe');
         expect(prompt).toContain('Remove advertising, not product details'.toUpperCase());
-        expect(prompt).toContain('exactly one clean 3:4 photograph');
+        expect(prompt).toContain('exactly one clean square 1:1 photograph');
         expect(prompt).toContain('Never sacrifice product accuracy for aesthetics');
     });
 });
