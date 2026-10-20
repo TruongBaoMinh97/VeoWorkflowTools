@@ -6,7 +6,8 @@
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "cross-env NODE_ENV=development electron ./dev-main.cjs",
-    "build": "tsc -p tsconfig.json && node ./scripts/copy-assets.js && node ./scripts/minify.js",
+    "build": "tsc -p tsconfig.json",
+    "build:captcha": "tsc -p tsconfig.json",
     "start": "electron ./dist/main/main.js"
   },
   "dependencies": {
