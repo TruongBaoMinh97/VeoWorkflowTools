@@ -16,6 +16,14 @@ Chạy, kiểm tra và tạo output thông qua các script `npm` ở thư mục 
 Không cập nhật app cố định hoặc đóng gói sau mỗi thay đổi. Chỉ chạy quy trình
 package/release khi người dùng yêu cầu phát hành hoặc cài bản mới.
 
+Phát triển liên tục trên một dòng source hiện tại; không tự chia thành nhiều
+bản, tạo thêm bản sao ứng dụng, thư mục release, shortcut hoặc bộ cài. Chỉ tạo
+package, bản cài, bản release hay một biến thể riêng khi người dùng yêu cầu rõ.
+
+Dùng backup ở mức tối thiểu. Chỉ tạo backup khi thao tác có rủi ro thực tế đối
+với dữ liệu hoặc khi người dùng yêu cầu; không tạo backup lặp lại cho các thay
+đổi source thông thường đã được Git quản lý.
+
 Mọi thay đổi phiên bản được quản lý bằng Git và GitHub:
 
 - Tạo branch `codex/<ten-thay-doi>` cho công việc mới.
