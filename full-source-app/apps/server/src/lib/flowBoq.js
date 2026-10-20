@@ -20,6 +20,7 @@ import { getCookieHeader, invalidateCookieJar, ESSENTIAL_COOKIE_NAMES } from './
 import { globalProxyManager } from './GlobalProxyManager.js';
 import { getProfileCookiesCompat } from '../utils/profileCookies.js';
 import { logger } from './logger.js';
+import { getHostUa } from './hostChromeUa.js';
 const BOQ_ENDPOINT = 'https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute';
 const FLOW_ORIGIN = 'https://flow.google.com';
 const FLOW_HOME = 'https://flow.google.com/';
@@ -59,8 +60,8 @@ export const FLOW_RPC = {
 };
 const SESSION_TTL_MS = 10 * 60000;
 const REQUEST_TIMEOUT_MS = 30000;
-/** Matches the desktop Chrome the TLS lane already impersonates. */
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+/** Matches the real host Chrome used by the verification-browser lane. */
+const DEFAULT_USER_AGENT = getHostUa();
 /** Flow answered with its logged-out shell — cookies cannot be repaired by retrying. */
 export class FlowSignedOutError extends Error {
     constructor(detail) {

@@ -19,6 +19,7 @@ import { callFlowRpc, FLOW_RPC } from "../../lib/flowBoq.js";
 import { buildMaseQArgs, detectImageKind, extractUploadedMediaId, flowClientContext, toUploadError, } from "./flowUpload.js";
 import { sessionIdManager } from "../../lib/sessionIdManager.js";
 import { buildProxyAgents, evictProxyAgent, applyInterProfileJitter, } from "./veo3ProxyManager.js";
+import { getHostUa, getHostSecChUa, getHostSecChUaPlatform, } from "../../lib/hostChromeUa.js";
 /** Ảnh tới 30MB qua proxy — 30s mặc định của flowBoq không đủ. */
 const UPLOAD_IMAGE_TIMEOUT_MS = 120000;
 /**
@@ -311,11 +312,11 @@ export class Veo3Service {
     constructor(config = {}) {
         this.baseUrl = "https://labs.google/fx/api/trpc";
         this.sandboxBaseUrl = "https://aisandbox-pa.googleapis.com/v1";
-        // Default browser headers — Chrome version must align with UA_PROFILES pool (125-135)
+        // Keep submit headers aligned with the real Chrome that owns the verification session.
         this.defaultHeaders = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "sec-ch-ua": '"Chromium";v="131", "Google Chrome";v="131", "Not(A:Brand";v="99"',
-            "sec-ch-ua-platform": '"macOS"',
+            "User-Agent": getHostUa(),
+            "sec-ch-ua": getHostSecChUa(),
+            "sec-ch-ua-platform": getHostSecChUaPlatform(),
             "sec-ch-ua-mobile": "?0",
             "content-type": "application/json",
         };

@@ -92,4 +92,22 @@ describe('Veo3Studio 1.8.8 captcha-core sync', () => {
         expect(getHostSecChUaPlatform()).toBe('"Windows"');
         expect(buildSecChUaForMajor(155)).toContain('"Google Chrome";v="155"');
     });
+
+    it('uses the host Chrome fingerprint in every generation request layer', () => {
+        const serverRoot = path.resolve(import.meta.dirname, '../..');
+        const serviceSource = fs.readFileSync(
+            path.join(serverRoot, 'src/services/veo3/veo3Service.js'),
+            'utf8',
+        );
+        const boqSource = fs.readFileSync(
+            path.join(serverRoot, 'src/lib/flowBoq.js'),
+            'utf8',
+        );
+
+        expect(serviceSource).toContain('"User-Agent": getHostUa()');
+        expect(serviceSource).toContain('"sec-ch-ua": getHostSecChUa()');
+        expect(serviceSource).toContain('"sec-ch-ua-platform": getHostSecChUaPlatform()');
+        expect(boqSource).toContain('const DEFAULT_USER_AGENT = getHostUa()');
+        expect(`${serviceSource}\n${boqSource}`).not.toContain('Chrome/131.0.0.0');
+    });
 });
