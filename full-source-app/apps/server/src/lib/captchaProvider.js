@@ -12,18 +12,51 @@
  * reset escalation all stay in captchaManager, so both providers are scored and
  * throttled identically.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { logger } from './logger.js';
 import { CaptchaError } from './errors.js';
+import { getElectronUserDataPath } from './electronPaths.js';
 import { electronBrowserBridge } from '../integrations/browser/ElectronBrowserBridge.js';
 /**
  * 'cdp' is the default since 2026-09-19: field-tested with zero 403s and it
  * spares the user the manual extension install. `CAPTCHA_PROVIDER=extension`
  * falls back to the old path, which is kept working for exactly that reason.
  */
-function readEnvProvider() {
-    return process.env.CAPTCHA_PROVIDER === 'extension' ? 'extension' : 'cdp';
+const PROVIDER_FILE = 'captcha-provider.json';
+function providerFilePath() {
+    return path.join(getElectronUserDataPath(), PROVIDER_FILE);
 }
-let activeProvider = readEnvProvider();
+/** Explicit environment override → persisted user choice → CDP default. */
+function readInitialProvider() {
+    if (process.env.CAPTCHA_PROVIDER === 'extension')
+        return 'extension';
+    if (process.env.CAPTCHA_PROVIDER === 'cdp')
+        return 'cdp';
+    if (process.env.CAPTCHA_PROVIDER !== undefined)
+        return 'cdp';
+    try {
+        const saved = JSON.parse(fs.readFileSync(providerFilePath(), 'utf8'));
+        if (saved.provider === 'extension' || saved.provider === 'cdp')
+            return saved.provider;
+    }
+    catch {
+        /* first run or unreadable file */
+    }
+    return 'cdp';
+}
+function persistProvider(provider) {
+    const filePath = providerFilePath();
+    try {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, JSON.stringify({ provider }), { mode: 0o600 });
+        fs.chmodSync(filePath, 0o600);
+    }
+    catch (err) {
+        logger.warn(`[captcha] could not persist provider: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
+let activeProvider = readInitialProvider();
 export function getCaptchaProvider() {
     return activeProvider;
 }
@@ -36,6 +69,7 @@ export function setCaptchaProvider(next) {
     if (next !== activeProvider) {
         logger.info(`[captcha] provider: ${activeProvider} → ${next}`);
         activeProvider = next;
+        persistProvider(next);
     }
     return activeProvider;
 }
@@ -76,6 +110,15 @@ export async function cdpEnsure() {
         method: 'POST',
     });
     return status;
+}
+/** Best-effort close used when switching away from the CDP provider. */
+export async function cdpClose() {
+    try {
+        await callBridge('/captcha/close', { method: 'POST' });
+    }
+    catch {
+        /* Browser already closed or Electron absent. */
+    }
 }
 /** Never throws — the status panel must render even when Electron is absent. */
 export async function cdpStatus() {

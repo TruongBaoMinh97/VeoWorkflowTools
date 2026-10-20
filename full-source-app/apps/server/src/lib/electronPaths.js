@@ -1,12 +1,12 @@
 // Shared resolver for Electron's per-OS userData directory. The packaged
 // Electron app uses `app.getPath('userData')` which always points here
-// (productName=veo3studio). Dev mode Electron uses "Electron" as the dir
+// (productName=Veo Workflow Tools). Dev mode Electron uses "Electron" as the dir
 // name by default — rundev.sh works around this by pre-exporting any
 // secrets the server needs, so the server hard-codes the production name.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-const APP_DIR_NAME = 'veo3studio';
+const APP_DIR_NAME = 'Veo Workflow Tools';
 /** Electron's default userData name in dev, where productName is not applied. */
 const DEV_APP_DIR_NAME = 'Electron';
 function userDataRoot(appDirName) {

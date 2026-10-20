@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { captchaManager } from '../../lib/captchaManager.js';
-import { cdpEnsure, cdpStatus, getCaptchaProvider, setCaptchaProvider, } from '../../lib/captchaProvider.js';
+import { cdpClose, cdpEnsure, cdpStatus, getCaptchaProvider, setCaptchaProvider, } from '../../lib/captchaProvider.js';
 import { ipMatchesAllowlist } from '../../lib/ipAllowlist.js';
 import { logger } from '../../lib/logger.js';
 import { safeStringEqual } from '../../lib/safeCompare.js';
@@ -136,6 +136,9 @@ export async function registerCaptchaBridgeRoutes(app) {
                 return;
             }
         }
+        // Switching to the extension provider makes the managed CDP browser
+        // unnecessary. Teardown is best-effort and must not delay the response.
+        void cdpClose();
         reply.send({ ok: true, provider });
     });
     app.get('/api/internal/captcha/poll', { schema: { hide: true } }, async (req, reply) => {

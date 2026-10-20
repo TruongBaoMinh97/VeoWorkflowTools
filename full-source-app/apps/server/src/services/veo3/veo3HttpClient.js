@@ -11,6 +11,7 @@ import { tlsFetch, recycleTlsSession } from '../../lib/tlsClient.js';
 import { getCookieHeader, invalidateCookieJar } from '../../lib/cookieJar.js';
 import { globalProxyManager } from '../../lib/GlobalProxyManager.js';
 import { logger } from '../../lib/logger.js';
+import { getHostUa, buildSecChUaForMajor } from '../../lib/hostChromeUa.js';
 function deriveChromeMajor(userAgent) {
     const match = /Chrome\/(\d+)/.exec(userAgent);
     if (!match)
@@ -32,10 +33,7 @@ function envChromeMajor() {
     const n = Number.parseInt(process.env.VEO3_CHROME_MAJOR ?? '', 10);
     return Number.isFinite(n) && n > 0 ? n : null;
 }
-function deriveSecChUa(chromeMajor) {
-    const notABrand = chromeMajor >= 129 ? '"Not(A:Brand";v="99"' : '"Not_A Brand";v="8"';
-    return `"Chromium";v="${chromeMajor}", "Google Chrome";v="${chromeMajor}", ${notABrand}`;
-}
+const deriveSecChUa = buildSecChUaForMajor;
 function deriveSecChUaPlatform(userAgent) {
     if (/Windows/i.test(userAgent))
         return '"Windows"';
@@ -45,11 +43,6 @@ function deriveSecChUaPlatform(userAgent) {
         return '"Android"';
     return '"macOS"';
 }
-const FALLBACK_UA = process.platform === 'win32'
-    ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
-    : process.platform === 'linux'
-        ? 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
-        : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
 function isVerboseSubmitLog() {
     return (process.env.VEO3_XHR_CAPTURE_SUBMITS === '1' ||
         /^true$/i.test(String(process.env.VEO3_XHR_CAPTURE_SUBMITS ?? '')));
@@ -79,7 +72,7 @@ export async function googleFetch(opts) {
     const proxyUrl = globalProxyManager.getCurrentHttpProxyUrl() ?? undefined;
     const isLabsGoogle = /^https:\/\/labs\.google\b/.test(opts.url);
     const callerUA = opts.headers?.['User-Agent'] ?? opts.headers?.['user-agent'];
-    const derivedUA = callerUA || FALLBACK_UA;
+    const derivedUA = callerUA || getHostUa();
     // Force the submit fingerprint to the host's REAL Chrome major so sec-ch-ua + UA
     // match the reCAPTCHA token minted inside that real Chrome. Env unset (standalone
     // dev) → keep the caller/derived UA. Only the Chrome/<n> token is rewritten, so
