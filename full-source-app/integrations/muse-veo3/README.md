@@ -17,7 +17,9 @@ as local Muse jobs labeled `Veo3 · <profile name>`. Use **Dừng job Veo3** for
 remote cancellation. Retry is routed by the local Muse host retry hook.
 
 Each submission creates an isolated Veo3 Gen project, using the selected
-project's profiles and image model. Existing drafts are never started or
+project's profiles. Image defaults are Nano Banana 2 Lite (`HARBOR_SEAL`),
+5 concurrent jobs/profile, a 10-second delay, burst size 4, and image upscale
+concurrency 1. This does not enable automatic upscale. Existing drafts are never started or
 cleared. Cookies/tokens stay in VeoWorkflow and are not copied into Muse.
 Remote jobs are reconciled after reload. Network failures are not automatically
 resubmitted, to avoid duplicate paid generation; partial failures include the

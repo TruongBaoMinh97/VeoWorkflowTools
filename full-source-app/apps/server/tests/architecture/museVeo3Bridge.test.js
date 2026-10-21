@@ -28,6 +28,13 @@ describe('Muse optional Veo3 adapter',()=>{
   it('rejects invalid references before contacting the service',async()=>{
     const {bridge,calls}=fixture();await expect(bridge.invoke({...payload,referenceIndices:[[3],[]]})).rejects.toThrow('tham chiếu');expect(calls).toHaveLength(0);
   });
+  it('uses the requested image defaults for configuration and start, independent of the source model and Muse concurrency',async()=>{
+    const {bridge,calls}=fixture();await bridge.invoke({...payload,concurrency:12});
+    const config=calls.find(c=>c.method==='PATCH').body;
+    expect(config).toMatchObject({imageModelKey:'HARBOR_SEAL',concurrency:5,delaySeconds:10,batchSize:4,imageUpscaleConcurrency:1});
+    expect(calls.at(-1).body).toEqual({imageModelKey:'HARBOR_SEAL',concurrency:5,delaySeconds:10,batchSize:4});
+    expect(config).not.toHaveProperty('autoUpscaleImage');
+  });
   it('releases submission lock after a failure',async()=>{
     const {bridge}=fixture();await expect(bridge.invoke({...payload,ratio:'bad'})).rejects.toThrow();expect(bridge.busy.size).toBe(0);await expect(bridge.invoke(payload)).resolves.toHaveProperty('projectId','isolated');
   });

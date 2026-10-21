@@ -1,4 +1,8 @@
 const BASE = 'http://127.0.0.1:4000';
+export const IMAGE_DEFAULTS = Object.freeze({
+  imageModelKey: 'HARBOR_SEAL', concurrency: 5, delaySeconds: 10,
+  batchSize: 4, imageUpscaleConcurrency: 1,
+});
 const terminal = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'CANCELED']);
 
 export class MuseVeo3Bridge {
@@ -54,8 +58,7 @@ export class MuseVeo3Bridge {
     if (!projectId) throw new Error('VeoWorkflow không trả về mã dự án.');
     const path = `/api/gen-normal/projects/${encodeURIComponent(projectId)}`;
     try {
-      await this.api(path, { aspectRatio: ratio, imageModelKey: source.imageModelKey || 'GEM_PIX_2', batchSize: 1,
-        concurrency: Math.min(12, Math.max(1, Number(payload.concurrency) || 2)), autoDownload: false }, 'PATCH');
+      await this.api(path, { ...IMAGE_DEFAULTS, aspectRatio: ratio, autoDownload: false }, 'PATCH');
       const uploaded = [];
       const needed = new Set(referenceIndices.flat());
       for (const index of needed) {
@@ -74,8 +77,8 @@ export class MuseVeo3Bridge {
       const { jobs } = await this.api(path + '/jobs');
       const ordered = [...jobs].sort((a,b) => a.jobIndex - b.jobIndex);
       if (ordered.length !== prompts.length) throw new Error('Số job Veo3 trả về không khớp số prompt.');
-      await this.api(path + '/start-generation', { batchSize: 1, imageModelKey: source.imageModelKey || 'GEM_PIX_2',
-        concurrency: Math.min(12, Math.max(1, Number(payload.concurrency) || 2)) });
+      const { imageUpscaleConcurrency, ...generationDefaults } = IMAGE_DEFAULTS;
+      await this.api(path + '/start-generation', generationDefaults);
       return { projectId, jobs: ordered.map(j => ({ id: j.id, profileName: j.profile?.name, profileId: j.profileId })) };
     } catch (error) {
       throw new Error(`${error.message} (Dự án VeoWorkflow: ${projectId}; kiểm tra tại Veo3 Gen trước khi gửi lại.)`);

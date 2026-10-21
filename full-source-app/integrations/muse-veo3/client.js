@@ -48,7 +48,7 @@ function mount() {
     <button type="button" data-refresh>Tải danh sách dự án</button>
     <button type="button" data-run>Tạo ảnh bằng Veo3</button>
     <button type="button" data-cancel>Dừng job Veo3</button>
-    <p style="font-size:11px;margin-top:6px">Dùng profile và model của dự án đã chọn. Kết quả xuất hiện trong bảng job bên dưới. Mỗi lần gửi tạo một batch riêng tại VeoWorkflow.</p></div>
+    <p style="font-size:11px;margin-top:6px">Dùng profile của dự án đã chọn. Mặc định: Nano Banana 2 Lite · 5 luồng/profile · nghỉ 10 giây · burst 4 ảnh · upscale 1 luồng/profile. Kết quả xuất hiện trong bảng job bên dưới. Mỗi lần gửi tạo một batch riêng tại VeoWorkflow.</p></div>
     <div data-message role="status" style="font-size:12px;margin-top:6px"></div>`;
   for (const el of panel.querySelectorAll('select,button')) el.style.cssText = 'background:#1e293b;color:#e2e8f0;border:1px solid #475569;border-radius:5px;padding:6px;margin-right:8px';
   composer.before(panel);
