@@ -160,7 +160,7 @@ function readWizValue(html, key) {
     const match = html.match(new RegExp(`"${key}":"([^"]*)"`));
     return match?.[1] ?? null;
 }
-async function bootstrapSession(profileId, userAgent) {
+async function bootstrapSession(profileId, userAgent, rereadCookies = true) {
     const cookies = await flowCookieHeader(profileId);
     const res = await tlsFetch({
         profileId,
@@ -185,13 +185,19 @@ async function bootstrapSession(profileId, userAgent) {
     const email = readWizValue(res.body, WIZ_KEYS.email);
     // The logged-out shell still renders WIZ_global_data, minus the account entry —
     // so the email is what separates "not signed in" from "page shape changed".
-    if (!xsrfToken || !buildLabel || !sessionId) {
-        throw email
-            ? new FlowRpcError('bootstrap', 'WIZ_global_data thiếu at/bl/f.sid — Flow có thể đã đổi trang')
-            : new FlowSignedOutError('không tìm thấy phiên trong WIZ_global_data');
+    const signedOut = !email && (!xsrfToken || !buildLabel || !sessionId)
+        ? 'không tìm thấy phiên trong WIZ_global_data'
+        : !email
+            ? 'WIZ_global_data không có tài khoản đăng nhập'
+            : null;
+    if (signedOut) {
+        invalidateCookieJar(profileId);
+        if (rereadCookies && (await flowCookieHeader(profileId)) !== cookies)
+            return bootstrapSession(profileId, userAgent, false);
+        throw new FlowSignedOutError(signedOut);
     }
-    if (!email)
-        throw new FlowSignedOutError('WIZ_global_data không có tài khoản đăng nhập');
+    if (!xsrfToken || !buildLabel || !sessionId)
+        throw new FlowRpcError('bootstrap', 'WIZ_global_data thiếu at/bl/f.sid — Flow có thể đã đổi trang');
     logger.info(`[FlowBoq] session ready for ${profileId.substring(0, 8)} (${email}) bl=${buildLabel}`);
     return { xsrfToken, buildLabel, sessionId, email, fetchedAt: Date.now() };
 }
@@ -370,4 +376,49 @@ export async function callFlowRpc(profileId, rpcid, args, opts = {}) {
         throw new FlowRpcError(rpcid, `HTTP ${status} — ${body.slice(0, 200)}`, status);
     }
     throw new FlowRpcError(rpcid, 'hết lượt thử sau khi làm mới phiên');
+}
+
+const PAYGATE_TIER_BY_CODE = {
+    1: 'PAYGATE_TIER_ONE',
+    2: 'PAYGATE_TIER_TWO',
+};
+const SERVICE_TIER_BY_CODE = { 3: 'SERVICE_TIER_ADVANCED' };
+const SKU_BY_CODE = { 3: 'G1_TIER2' };
+
+export function parseCreditsPayload(payload) {
+    if (!Array.isArray(payload) || typeof payload[0] !== 'number')
+        throw new FlowRpcError(FLOW_RPC.credits, `payload credits không hợp lệ: ${JSON.stringify(payload)?.slice(0, 120)}`);
+    const lookup = (table, code) => typeof code === 'number' ? (table[code] ?? '') : '';
+    return {
+        credits: payload[0],
+        userPaygateTier: lookup(PAYGATE_TIER_BY_CODE, payload[1]),
+        serviceTier: lookup(SERVICE_TIER_BY_CODE, payload[2]),
+        sku: lookup(SKU_BY_CODE, payload[3]),
+        ...(typeof payload[5] === 'number' ? { subscriptionCredits: payload[5] } : {}),
+    };
+}
+
+const SIGN_IN_CACHE_MS = 5 * 60_000;
+const signInCache = new Map();
+
+/** Ask Flow itself whether the stored profile cookies still represent a signed-in account. */
+export async function checkFlowSignIn(profileId, opts = {}) {
+    const cached = signInCache.get(profileId);
+    if (!opts.fresh && cached && Date.now() - cached.at < SIGN_IN_CACHE_MS)
+        return cached.state;
+    if (opts.fresh)
+        invalidateFlowSession(profileId);
+    let state;
+    try {
+        await callFlowRpc(profileId, FLOW_RPC.credits, [], { timeoutMs: 20_000 });
+        state = 'signed-in';
+    }
+    catch (error) {
+        state = error instanceof FlowSignedOutError ? 'signed-out' : 'unknown';
+        if (state === 'unknown')
+            logger.warn(`[FlowBoq] không kiểm tra được đăng nhập ${profileId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (state !== 'unknown')
+        signInCache.set(profileId, { at: Date.now(), state });
+    return state;
 }

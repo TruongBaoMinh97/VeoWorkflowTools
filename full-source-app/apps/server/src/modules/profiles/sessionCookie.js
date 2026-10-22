@@ -67,3 +67,55 @@ export function readSessionCookie(parsed) {
 export function hasSessionCookie(parsed) {
     return readSessionCookie(parsed).found;
 }
+
+const GOOGLE_SIGNIN_COOKIES = ['SID', '__Secure-1PSID', '__Secure-3PSID'];
+
+/** True when the partition carries the Google account cookies used by Flow. */
+export function hasGoogleSignIn(parsed) {
+    if (!parsed)
+        return false;
+    return parsed.some((entry) => {
+        if (!entry || typeof entry !== 'object')
+            return false;
+        return typeof entry.name === 'string' && GOOGLE_SIGNIN_COOKIES.includes(entry.name);
+    });
+}
+
+const GOOGLE_LOGIN_EXPIRY_COOKIES = ['__Secure-1PSID', '__Secure-3PSID', 'SID'];
+
+export function readGoogleLoginExpiry(parsed) {
+    if (!parsed)
+        return EMPTY;
+    let expiry = null;
+    let candidates = 0;
+    let sawSessionScoped = false;
+    for (const entry of parsed) {
+        if (!entry || typeof entry !== 'object')
+            continue;
+        if (typeof entry.name !== 'string' || !GOOGLE_LOGIN_EXPIRY_COOKIES.includes(entry.name))
+            continue;
+        candidates++;
+        if (entry.expirationDate == null) {
+            sawSessionScoped = true;
+            continue;
+        }
+        const ms = Math.floor(Number(entry.expirationDate)) * 1000;
+        if (!Number.isFinite(ms) || ms <= 0)
+            continue;
+        const candidate = new Date(ms);
+        if (!expiry || candidate > expiry)
+            expiry = candidate;
+    }
+    return {
+        expiry,
+        found: candidates > 0,
+        sessionScopedOnly: candidates > 0 && expiry === null && sawSessionScoped,
+        candidates,
+    };
+}
+
+/** Prefer the legacy Labs expiry when present, otherwise use the Google login expiry. */
+export function readSessionExpiry(parsed) {
+    const legacy = readSessionCookie(parsed);
+    return legacy.found ? legacy : readGoogleLoginExpiry(parsed);
+}

@@ -16,6 +16,7 @@
   },
   "include": [
     "src/main/captchaBrowserManager.ts",
-    "src/main/captchaFrameMint.ts"
+    "src/main/captchaFrameMint.ts",
+    "src/main/systemBrowserLogin.ts"
   ]
 }

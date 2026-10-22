@@ -16,7 +16,7 @@ import { extractUUIDFromMediaId, normalizeReferenceImage, } from "../../utils/re
 import { globalProxyManager } from "../../lib/GlobalProxyManager.js";
 import { googleFetch } from "./veo3HttpClient.js";
 import { pushFlowTelemetry } from "./flowTelemetryBuffer.js";
-import { callFlowRpc, FLOW_RPC } from "../../lib/flowBoq.js";
+import { callFlowRpc, FLOW_RPC, parseCreditsPayload } from "../../lib/flowBoq.js";
 import { buildMaseQArgs, detectImageKind, extractUploadedMediaId, flowClientContext, toUploadError, } from "./flowUpload.js";
 import { sessionIdManager } from "../../lib/sessionIdManager.js";
 import { buildProxyAgents, evictProxyAgent, applyInterProfileJitter, } from "./veo3ProxyManager.js";
@@ -886,30 +886,15 @@ export class Veo3Service {
         }
         return accessToken;
     }
-    /**
-     * ✅ Get Credits and Paygate Tier from sandbox API
-     * GET /v1/credits
-     */
+    /** Get credits and paygate tier from Flow's cookie-authenticated BOQ RPC. */
     async getCredits() {
-        const url = `${this.sandboxBaseUrl}/credits?key=AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY`;
-        return this.executeWithTokenRefresh(async () => {
-            const response = await googleFetch({
-                profileId: this.config.profileId,
-                veo3ProjectId: this.config.veo3ProjectId,
-                locale: this.config.locale,
-                url,
-                method: "GET",
-                headers: this.getSandboxHeaders("application/json"),
-            });
-            if (!response.ok) {
-                const errorText = await response.text();
-                const error = new Error(`Failed to get credits: ${response.statusText}`);
-                error.response = response;
-                error.errorText = errorText;
-                throw error;
-            }
-            return await response.json();
+        const profileId = this.config.profileId;
+        if (!profileId)
+            throw new Error("Thiếu profileId — không thể lấy credits từ Flow");
+        const payload = await callFlowRpc(profileId, FLOW_RPC.credits, [], {
+            userAgent: this.config.userAgent,
         });
+        return parseCreditsPayload(payload);
     }
     /**
      * Create a Flow project.

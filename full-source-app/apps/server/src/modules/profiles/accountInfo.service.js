@@ -6,16 +6,12 @@
  */
 import { prisma } from '../../lib/prisma.js';
 import { Veo3Service } from '../../services/veo3/veo3Service.js';
-import { cookieTokenService } from '../../lib/cookieTokenService.js';
-import { requestProfileRemint } from '../../lib/sessionRemintRequest.js';
-import { refreshAccessTokenFromCookies } from '../../providers/utils/cookieAuth.js';
 import { getProfileCookiesCompat } from '../../utils/profileCookies.js';
-import { readSessionCookie } from './sessionCookie.js';
+import { readSessionExpiry } from './sessionCookie.js';
 import { logger } from '../../lib/logger.js';
 const SEMAPHORE_WIDTH = 3;
 const STAGGER_MS = 400;
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const TOKEN_REFRESH_LEAD_MS = 10 * 60 * 1000;
 /**
  * Error text that genuinely means "this session is no longer accepted".
  * Matched case-insensitively. Deliberately narrow: the previous `hết hạn`
@@ -124,12 +120,7 @@ export async function refreshProfileAccountInfo(profileId, opts = {}) {
                 sessionScopedOnly: false,
             };
         }
-        const storedTokenExpiresMs = profile.accessTokenExpires
-            ? new Date(profile.accessTokenExpires).getTime()
-            : NaN;
-        const isTokenExpiredOrSoon = !Number.isFinite(storedTokenExpiresMs) ||
-            storedTokenExpiresMs <= Date.now() + TOKEN_REFRESH_LEAD_MS;
-        if (!opts.force && !isTokenExpiredOrSoon && profile.creditsUpdatedAt) {
+        if (!opts.force && profile.creditsUpdatedAt) {
             const ageMs = Date.now() - new Date(profile.creditsUpdatedAt).getTime();
             if (ageMs < CACHE_TTL_MS) {
                 logger.debug(`[AccountInfo] cache hit ${profileId.substring(0, 8)}: age=${Math.round(ageMs / 1000)}s ` +
@@ -138,7 +129,7 @@ export async function refreshProfileAccountInfo(profileId, opts = {}) {
                 // renders as healthy — that fact lives only in the cookie, so re-read it
                 // (local IPC, no Google call) instead of degrading to "no data".
                 const scopedOnly = profile.sessionExpiresAt == null
-                    ? readSessionCookie((await getProfileCookiesCompat(profile)).parsed).sessionScopedOnly
+                    ? readSessionExpiry((await getProfileCookiesCompat(profile)).parsed).sessionScopedOnly
                     : false;
                 return cachedInfo(profile, null, null, { sessionScopedOnly: scopedOnly });
             }
@@ -150,54 +141,19 @@ export async function refreshProfileAccountInfo(profileId, opts = {}) {
         // Real session expiry, read before any network call. `parsed === null`
         // means the cookie payload was unreadable (bridge down / corrupt snapshot)
         // — in that case we must NOT let the read touch the stored expiry.
-        const sessionCookie = readSessionCookie(parsed);
+        const sessionCookie = readSessionExpiry(parsed);
         const cookiesReadable = parsed !== null;
         if (sessionCookie.candidates > 1) {
             logger.warn(`[AccountInfo] ${profileId.substring(0, 8)}: ${sessionCookie.candidates} session-token cookies in partition ` +
                 `— using latest expiry ${sessionCookie.expiry?.toISOString() ?? 'n/a'}`);
         }
-        // Proactively resolve the ya29 access token (JWT) from cookies. This both
-        // (a) surfaces the REAL JWT expiry for the card and (b) keeps the token warm
-        // so downstream jobs are less likely to 401. cookieTokenService returns the
-        // cached token when still valid, so this rarely hits the network.
-        let accessToken = profile.accessToken ?? undefined;
-        let accessTokenExpires = profile.accessTokenExpires ?? null;
-        try {
-            const tok = await refreshAccessTokenFromCookies(cookies, profileId, {
-                force: Boolean(opts.force || isTokenExpiredOrSoon),
-            });
-            accessToken = tok.accessToken;
-            accessTokenExpires = tok.expiresAt ?? accessTokenExpires;
-            await prisma.profile
-                .update({
-                where: { id: profileId },
-                data: { accessToken, accessTokenExpires: accessTokenExpires ?? undefined },
-            })
-                .catch(() => { });
-        }
-        catch (tokenErr) {
-            if (tokenErr?.code === 'FLOW_SESSION_REMINT_REQUIRED' && opts.force) {
-                requestProfileRemint(profileId, 'manual-refresh', { force: true });
-            }
-            // Cookies expired / labs session missing → getCredits below will 401 and
-            // surface UNAUTHORIZED with the cached values intact.
-        }
+        // Flow 1.8.9 authenticates this request with Google cookies. The retired
+        // labs.google auth/session endpoint no longer supplies a ya29 token.
+        const accessTokenExpires = null;
         const provider = new Veo3Service({
-            accessToken,
             cookies,
             profileId,
             proxyConfig: extractProxyConfig(profile),
-            // The callback only receives the token string, but cookieTokenService has
-            // already cached the REAL expiry from the auth/session response — read it
-            // back instead of guessing +55 minutes.
-            onTokenRefreshed: async (newToken) => {
-                const cached = cookieTokenService.getCachedToken(profileId);
-                accessTokenExpires = cached?.expiresAt ?? new Date(Date.now() + 55 * 60 * 1000);
-                await prisma.profile.update({
-                    where: { id: profileId },
-                    data: { accessToken: newToken, accessTokenExpires },
-                });
-            },
         });
         let creditsResp;
         try {
@@ -221,7 +177,7 @@ export async function refreshProfileAccountInfo(profileId, opts = {}) {
             // An HTTP status is unambiguous, so it outranks any message matching.
             const lower = msg.toLowerCase();
             let errorCode = 'NETWORK';
-            if (status === 401) {
+            if (err?.code === 'FLOW_SIGNED_OUT' || status === 401) {
                 errorCode = 'UNAUTHORIZED';
             }
             else if (status === 429) {
@@ -248,6 +204,7 @@ export async function refreshProfileAccountInfo(profileId, opts = {}) {
                 credits: creditsResp.credits ?? null,
                 subscriptionCredits: creditsResp.subscriptionCredits ?? null,
                 creditsUpdatedAt: now,
+                accessTokenExpires: null,
                 // Write what the cookies say, null included — a stale past value has to
                 // be cleared or the 5-minute cache keeps replaying it as "expired".
                 ...(cookiesReadable ? { sessionExpiresAt: sessionCookie.expiry } : {}),

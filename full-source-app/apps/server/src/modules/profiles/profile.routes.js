@@ -1,23 +1,32 @@
 import { z } from 'zod';
 import { profileSchema, profileService } from './profile.service.js';
-import { refreshAccessTokenFromCookies, validateCookiesWithApi } from '../../providers/utils/cookieAuth.js';
 import { logger } from '../../lib/logger.js';
 import { refreshProfileAccountInfo, refreshManyProfileAccountInfo } from './accountInfo.service.js';
-import { hasSessionCookie, SESSION_COOKIE as REQUIRED_LABS_COOKIE } from './sessionCookie.js';
-// labs.google NextAuth session — without this cookie the /api/auth/session
-// endpoint returns `{}` and the ya29 access-token refresh fails with the
-// misleading "Google returned empty session" error. Surface the real cause
-// (incomplete browser login) BEFORE making the network call.
-// Matching lives in sessionCookie.ts so this check can never drift from the
-// one that computes the expiry shown on the Profiles tab.
-function missingLabsSessionError(profileId) {
-    logger.warn(`[Profile] ${REQUIRED_LABS_COOKIE} missing in partition for ${profileId.substring(0, 8)} — re-login required`);
+import { hasGoogleSignIn } from './sessionCookie.js';
+import { checkFlowSignIn } from '../../lib/flowBoq.js';
+
+function signedOutFlowError(profileId) {
+    logger.warn(`[Profile] Google sign-in cookies missing for ${profileId.substring(0, 8)} — re-login required`);
     return {
-        code: 'LABS_SESSION_COOKIE_MISSING',
-        message: 'Profile chưa hoàn tất đăng nhập Flow AI. Phiên làm việc chưa được cấp ' +
-            'đầy đủ — không lấy được access token.',
+        code: 'FLOW_SIGNED_OUT',
+        message: 'Profile chưa đăng nhập tài khoản Google cho Flow AI.',
         action: 'Vui lòng đăng nhập lại và GIỮ cửa sổ Chrome mở cho đến khi trang ' +
             'flow.google.com tải xong hoàn toàn rồi mới đóng.',
+    };
+}
+
+async function verifyFlowConnection(profileId) {
+    const state = await checkFlowSignIn(profileId, { fresh: true });
+    if (state === 'signed-in')
+        return { ok: true };
+    if (state === 'signed-out') {
+        const error = signedOutFlowError(profileId);
+        return { ok: false, code: error.code, error: `${error.message} ${error.action}` };
+    }
+    return {
+        ok: false,
+        code: 'FLOW_UNREACHABLE',
+        error: 'Không kiểm tra được kết nối Flow (mạng hoặc proxy) — thử lại sau.',
     };
 }
 export async function registerProfileRoutes(app) {
@@ -133,13 +142,12 @@ export async function registerProfileRoutes(app) {
             });
         }
     });
-    // Lightweight pre-flight check — does NOT hit Google. Just inspects the
-    // partition cookies + cached token expiry so the renderer can show a
-    // "Profile X needs re-login" modal BEFORE submitting a batch of jobs.
+    // Profile pre-flight. Flow retired the Labs token endpoint, so the only
+    // authoritative check is whether Flow accepts the stored Google cookies.
     //
     // Returns:
-    //   status='fresh'       cookies present + labs session present + token not expired
-    //   status='stale'       cookies present but labs session missing OR token expired
+    //   status='fresh'       Flow accepts the stored cookies
+    //   status='stale'       Flow shows a signed-out shell
     //   status='no-cookies'  partition empty (never logged in, or wiped)
     //   status='unknown'     profile not found / error reading
     app.get('/api/profiles/:id/auth-status', async (request, reply) => {
@@ -153,20 +161,14 @@ export async function registerProfileRoutes(app) {
             if (!hasCookies) {
                 return reply.send({ status: 'no-cookies', hasLabsSession: false, tokenExpiresAt: null });
             }
-            const labsSession = hasSessionCookie(parsed);
-            const tokenExpiry = profile.accessTokenExpires ? new Date(profile.accessTokenExpires) : null;
-            const tokenFresh = tokenExpiry ? tokenExpiry.getTime() > Date.now() + 60000 : false; // 60s safety margin
-            if (!labsSession || !tokenFresh) {
-                return reply.send({
-                    status: 'stale',
-                    hasLabsSession: labsSession,
-                    tokenExpiresAt: tokenExpiry?.toISOString() ?? null,
-                });
-            }
+            const hasGoogleCookies = hasGoogleSignIn(parsed);
+            const signIn = hasGoogleCookies ? await checkFlowSignIn(params.id) : 'signed-out';
+            if (signIn === 'unknown')
+                return reply.send({ status: 'unknown', hasLabsSession: hasGoogleCookies, tokenExpiresAt: null });
             return reply.send({
-                status: 'fresh',
-                hasLabsSession: true,
-                tokenExpiresAt: tokenExpiry?.toISOString() ?? null,
+                status: signIn === 'signed-in' ? 'fresh' : 'stale',
+                hasLabsSession: signIn === 'signed-in',
+                tokenExpiresAt: null,
             });
         }
         catch (err) {
@@ -175,7 +177,7 @@ export async function registerProfileRoutes(app) {
             return reply.code(500).send({ status: 'unknown', error: message });
         }
     });
-    // Test profile connection (validate cookies and get access token)
+    // Test profile connection directly against Flow.
     app.post('/api/profiles/:id/test', async (request, reply) => {
         const params = z.object({ id: z.string().min(1) }).parse(request.params);
         try {
@@ -186,7 +188,7 @@ export async function registerProfileRoutes(app) {
             }
             // Get cookies from partition
             const { getProfileCookiesCompat } = await import('../../utils/profileCookies.js');
-            const { cookies: profileCookies, hasCookies, parsed } = await getProfileCookiesCompat(profile);
+            const { hasCookies, parsed } = await getProfileCookiesCompat(profile);
             if (!hasCookies) {
                 reply.code(400).send({
                     success: false,
@@ -194,26 +196,17 @@ export async function registerProfileRoutes(app) {
                 });
                 return;
             }
-            // Pre-check: without the labs.google NextAuth cookie the upstream call
-            // will return `{}` with a generic message. Fail fast with actionable text.
-            if (!hasSessionCookie(parsed)) {
-                const err = missingLabsSessionError(profile.id);
+            if (!hasGoogleSignIn(parsed)) {
+                const err = signedOutFlowError(profile.id);
                 reply.code(400).send({ success: false, ...err });
                 return;
             }
-            // Validate cookies and get access token
-            const { accessToken, expiresAt } = await refreshAccessTokenFromCookies(profileCookies, profile.id, { force: true });
-            // Update profile with access token only (cookies fetched live from partition)
-            await profileService.update(profile.id, {
-                accessToken,
-                accessTokenExpires: expiresAt,
-            });
-            reply.send({
-                success: true,
-                message: 'Connection successful! Access token retrieved and cached.',
-                accessToken: `${accessToken.substring(0, 20)}...${accessToken.substring(accessToken.length - 10)}`,
-                expiresAt: expiresAt?.toISOString(),
-            });
+            const verdict = await verifyFlowConnection(profile.id);
+            if (!verdict.ok) {
+                reply.code(400).send({ success: false, code: verdict.code, error: verdict.error });
+                return;
+            }
+            reply.send({ success: true, message: 'Kết nối Flow thành công — cookie của profile còn hiệu lực.' });
         }
         catch (error) {
             reply.code(400).send({
@@ -222,7 +215,7 @@ export async function registerProfileRoutes(app) {
             });
         }
     });
-    // Refresh access token from cookies
+    // Compatibility route: verify/refresh the Flow cookie session.
     app.post('/api/profiles/:id/refresh-token', async (request, reply) => {
         const params = z.object({ id: z.string().min(1) }).parse(request.params);
         try {
@@ -233,7 +226,7 @@ export async function registerProfileRoutes(app) {
             }
             // Get cookies from partition
             const { getProfileCookiesCompat } = await import('../../utils/profileCookies.js');
-            const { cookies: profileCookies, hasCookies, parsed } = await getProfileCookiesCompat(profile);
+            const { hasCookies, parsed } = await getProfileCookiesCompat(profile);
             if (!hasCookies) {
                 reply.code(400).send({
                     success: false,
@@ -241,23 +234,17 @@ export async function registerProfileRoutes(app) {
                 });
                 return;
             }
-            if (!hasSessionCookie(parsed)) {
-                const err = missingLabsSessionError(profile.id);
+            if (!hasGoogleSignIn(parsed)) {
+                const err = signedOutFlowError(profile.id);
                 reply.code(400).send({ success: false, ...err });
                 return;
             }
-            // Refresh access token from cookies
-            const { accessToken, expiresAt } = await refreshAccessTokenFromCookies(profileCookies, profile.id, { force: true });
-            // Update profile with access token only (cookies fetched live from partition)
-            await profileService.update(profile.id, {
-                accessToken,
-                accessTokenExpires: expiresAt,
-            });
-            reply.send({
-                success: true,
-                message: 'Access token refreshed successfully!',
-                expiresAt: expiresAt?.toISOString(),
-            });
+            const verdict = await verifyFlowConnection(profile.id);
+            if (!verdict.ok) {
+                reply.code(400).send({ success: false, code: verdict.code, error: verdict.error });
+                return;
+            }
+            reply.send({ success: true, message: 'Phiên Flow còn hiệu lực.', expiresAt: null });
         }
         catch (error) {
             reply.code(400).send({
@@ -403,41 +390,20 @@ export async function registerProfileRoutes(app) {
             if (activeProfiles.length === 0) {
                 return reply.send({ success: true, results: [], message: 'No active profiles' });
             }
-            const { getProfileCookiesCompat } = await import('../../utils/profileCookies.js');
             const results = [];
             for (const profile of activeProfiles) {
-                const { cookies, hasCookies } = await getProfileCookiesCompat(profile);
-                if (!hasCookies || !cookies) {
-                    results.push({ profileId: profile.id, profileName: profile.name, success: false, noCookies: true, error: 'No cookies' });
-                    continue;
-                }
-                try {
-                    // refreshAccessTokenFromCookies returns the REAL auth/session expiry
-                    // (same helper as /api/profiles/:id/test) instead of a +55min guess.
-                    const refreshed = await refreshAccessTokenFromCookies(cookies, profile.id, { force: true });
-                    const expiresAt = refreshed.expiresAt ?? new Date(Date.now() + 55 * 60 * 1000);
-                    await profileService.update(profile.id, {
-                        accessToken: refreshed.accessToken,
-                        accessTokenExpires: expiresAt,
-                    });
-                    results.push({
-                        profileId: profile.id,
-                        profileName: profile.name,
-                        success: true,
-                        expiresAt: expiresAt.toISOString(),
-                    });
-                }
-                catch (err) {
-                    const needsRelogin = err?.code === 'FLOW_SESSION_REMINT_REQUIRED';
-                    results.push({
-                        profileId: profile.id,
-                        profileName: profile.name,
-                        success: false,
-                        needsRelogin,
-                        errorCode: err?.code ?? null,
-                        error: err?.message ?? String(err),
-                    });
-                }
+                const verdict = await verifyFlowConnection(profile.id);
+                results.push({
+                    profileId: profile.id,
+                    profileName: profile.name,
+                    success: verdict.ok,
+                    expiresAt: null,
+                    ...(verdict.ok ? {} : {
+                        needsRelogin: verdict.code === 'FLOW_SIGNED_OUT',
+                        errorCode: verdict.code,
+                        error: verdict.error,
+                    }),
+                });
             }
             const failedProfiles = results.filter(r => !r.success);
             reply.send({
@@ -459,22 +425,13 @@ export async function registerProfileRoutes(app) {
         reply.send({ success: true, message: 'Warmup is a no-op in single-shared-browser mode' });
     });
     // Triggered by Electron after the user closes a profile's Real Chrome.
-    // Re-reads the partition (which the CDP poll loop has already updated with
-    // the latest cookies) and refreshes the cached ya29 access-token so the
-    // next Veo3 API call doesn't fail on a stale token.
+    // Re-reads the partition after Chrome sync and verifies the session on Flow.
     app.post('/api/profiles/warmup-single', async (request, reply) => {
         const body = z
             .object({ profileId: z.string().min(1), force: z.boolean().optional() })
             .parse(request.body);
         try {
             const { getProfileCookies } = await import('../../utils/profileCookies.js');
-            // `force` is used to VERIFY a just-minted session: without dropping the
-            // cached token first, this would hand back the very token we replaced and
-            // report success no matter what happened in the browser.
-            if (body.force) {
-                const { cookieTokenService } = await import('../../lib/cookieTokenService.js');
-                cookieTokenService.clearCache(body.profileId);
-            }
             const cookies = await getProfileCookies(body.profileId);
             if (!cookies) {
                 return reply.send({
@@ -484,41 +441,8 @@ export async function registerProfileRoutes(app) {
                     error: 'No cookies in partition — user may need to log in again',
                 });
             }
-            let result;
-            try {
-                result = await refreshAccessTokenFromCookies(cookies, body.profileId);
-            }
-            catch (err) {
-                if (err?.code === 'FLOW_SESSION_REMINT_REQUIRED') {
-                    // Clear the stored expiry so /auth-status stops answering `fresh` off a
-                    // token that Google no longer honours — otherwise the warm-up sees a
-                    // healthy profile and never engages.
-                    await profileService
-                        .update(body.profileId, { accessTokenExpires: null })
-                        .catch(() => { });
-                    return reply.send({
-                        success: false,
-                        hasAccessToken: false,
-                        needsRelogin: true,
-                        errorCode: 'FLOW_SESSION_REMINT_REQUIRED',
-                        error: err.message,
-                    });
-                }
-                throw err;
-            }
-            // Persist token + expiry so GET /auth-status (which reads the DB
-            // `accessTokenExpires`) flips to `fresh` immediately. Without this the
-            // warm-up refreshes the in-memory token but auth-status stays `stale`,
-            // so the warm-up loop polls the full 60s timeout before closing Chrome
-            // and reports the profile as not-warmed (then re-warms it).
-            if (result.accessToken) {
-                await profileService.update(body.profileId, {
-                    accessToken: result.accessToken,
-                    accessTokenExpires: result.expiresAt,
-                });
-                // The gen-normal queue parks a profile once its cookies die and skips
-                // every queued job for it. Nothing used to lift that, so a profile
-                // stayed parked until the app restarted even after a good re-login.
+            const signIn = await checkFlowSignIn(body.profileId, { fresh: Boolean(body.force) });
+            if (signIn === 'signed-in') {
                 try {
                     const { genNormalQueueManager } = await import('../genNormal/genNormalQueueManager.js');
                     genNormalQueueManager.clearNeedsRelogin(body.profileId);
@@ -526,11 +450,22 @@ export async function registerProfileRoutes(app) {
                 catch (err) {
                     logger.warn(`[warmup-single] could not clear needs-relogin for ${body.profileId.substring(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
                 }
+                return reply.send({ success: true, hasAccessToken: true, expiresAt: null });
+            }
+            if (signIn === 'signed-out') {
+                return reply.send({
+                    success: false,
+                    hasAccessToken: false,
+                    needsRelogin: true,
+                    errorCode: 'FLOW_SIGNED_OUT',
+                    error: 'Flow không nhận cookie đã lưu của profile — cần mở Chrome để làm mới phiên',
+                });
             }
             return reply.send({
-                success: true,
-                hasAccessToken: Boolean(result.accessToken),
-                expiresAt: result.expiresAt ?? null,
+                success: false,
+                hasAccessToken: false,
+                transient: true,
+                error: 'Không kiểm tra được đăng nhập Flow',
             });
         }
         catch (err) {

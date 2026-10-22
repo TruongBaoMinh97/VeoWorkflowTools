@@ -23429,11 +23429,11 @@ const Z4 = {
     title: "Không thể mở Chrome",
     body: "Đã có lỗi xảy ra khi mở Chrome. Thử đóng app rồi mở lại; nếu vẫn lỗi, copy mã lỗi bên dưới và liên hệ hỗ trợ.",
   },
-  LABS_SESSION_MISSING: {
-    title: "Cần thêm thời gian để hoàn tất đăng nhập",
-    body: `Đăng nhập gần xong nhưng Google chưa cấp phiên Flow AI.
-1. Nhấn Thử lại — app sẽ tự hoàn tất bước xác thực còn lại
-2. Nếu vẫn lỗi, đóng Chrome và đăng nhập lại từ đầu`,
+  FLOW_SIGNED_OUT: {
+    title: "Flow chưa nhận phiên đăng nhập",
+    body: `Chrome đã đăng nhập Google nhưng Flow chưa nhận tài khoản.
+1. Giữ cửa sổ Chrome mở đến khi flow.google.com tải xong
+2. Nếu vẫn lỗi, đăng nhập lại tài khoản Google rồi thử lại`,
   },
   CHROME_UNKNOWN: {
     title: "Không thể mở Chrome",
@@ -23443,11 +23443,8 @@ const Z4 = {
 function Ad(t) {
   if (!t) return "CHROME_UNKNOWN";
   const s = t.toLowerCase();
-  return s.includes("labs.google") ||
-    s.includes("flow.google.com") ||
-    s.includes("__secure-next-auth") ||
-    s.includes("session-token")
-    ? "LABS_SESSION_MISSING"
+  return s.includes("flow.google.com") || s.includes("flow_signed_out")
+    ? "FLOW_SIGNED_OUT"
     : s.includes("background-mode") || s.includes("background mode")
       ? "CHROME_BACKGROUND_MODE"
       : s.includes("user data dir") ||
@@ -25022,9 +25019,7 @@ function nw() {
       try {
         const H = await window.electronAPI.profileOpenRealChrome({
           profileId: X.id,
-          url: O
-            ? "https://labs.google/fx/tools/flow"
-            : "https://flow.google.com/",
+          url: "https://flow.google.com/",
           forceRelogin: O,
         });
         if (!H.success) {
@@ -25049,11 +25044,8 @@ function nw() {
       async (X) => {
         _(X), z(null);
         try {
-          const O = await x(X),
-            H = O?.accessTokenExpires
-              ? new Date(O.accessTokenExpires).getTime()
-              : 0,
-            ue = !H || H <= Date.now() || O?.errorCode === "UNAUTHORIZED";
+          const O = await ye.get(`/api/profiles/${X}/auth-status`),
+            ue = O?.status === "stale" || O?.status === "no-cookies";
           if (ue && window.electronAPI?.profileOpenBrowserForLogin) {
             window.electronAPI.setAutoWarmupEnabled?.(!0).catch(() => {});
             const ae = await window.electronAPI.profileOpenBrowserForLogin(X);
@@ -25087,10 +25079,9 @@ function nw() {
         t.filter(
           (X) =>
             X.isActive !== !1 &&
-            (!X.accessTokenExpires ||
-              new Date(X.accessTokenExpires).getTime() <= Date.now()),
+            (l[X.id] === "UNAUTHORIZED" || l[X.id] === "FLOW_SIGNED_OUT"),
         ),
-      [t],
+      [t, l],
     ),
     Q = u.useCallback(async () => {
       if (B || K.length === 0) return;
@@ -25135,7 +25126,7 @@ function nw() {
                       className:
                         "flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50 shadow-sm",
                       title:
-                        "Tự động mở nhanh Chrome để cấp lại Access Token 24h mới cho các profile đã hết hạn",
+                        "Tự động mở Chrome để đăng nhập lại các profile đã mất phiên Flow",
                       children: [
                         e.jsx(Fe, {
                           className: `h-3.5 w-3.5 ${B ? "animate-spin" : ""}`,
@@ -43460,7 +43451,7 @@ function v6({ onNavigateToProfiles: t }) {
                     e.jsx("p", {
                       className:
                         "text-sm font-medium text-amber-800 dark:text-amber-200",
-                      children: "Access Token 24h cần cấp lại",
+                      children: "Phiên Flow cần đăng nhập lại",
                     }),
                     e.jsx("p", {
                       className:
@@ -43481,7 +43472,7 @@ function v6({ onNavigateToProfiles: t }) {
                             }),
                             B.has(A.profileId)
                               ? "Đang tự cấp lại..."
-                              : "⚡ Tự cấp lại Token ngay",
+                              : "⚡ Đăng nhập lại Flow",
                           ],
                         }),
                         e.jsx("button", {
