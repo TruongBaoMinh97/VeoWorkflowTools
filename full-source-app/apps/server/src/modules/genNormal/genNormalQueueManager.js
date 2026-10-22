@@ -1867,7 +1867,8 @@ class GenNormalQueueManager {
             return;
         }
         // 🔐 Check if cookies/token expired (UNAUTHORIZED) — trip circuit breaker immediately
-        const isUnauthorizedError = error?.message?.includes('UNAUTHORIZED') ||
+        const isUnauthorizedError = error?.code === 'FLOW_SIGNED_OUT' ||
+            error?.message?.includes('UNAUTHORIZED') ||
             error?.message?.includes('không thể refresh từ cookies') ||
             error?.message?.includes('cookies đã hết hạn') ||
             error?.message?.includes('Vui lòng cập nhật cookies') ||
@@ -1880,19 +1881,10 @@ class GenNormalQueueManager {
             let recovered = false;
             try {
                 captchaManager.notifyFailure();
-                const { getProfileCookies } = await import('../../utils/profileCookies.js');
-                const freshCookies = await getProfileCookies(profileId);
-                if (freshCookies) {
-                    const { refreshAccessTokenFromCookies } = await import('../../providers/utils/cookieAuth.js');
-                    const { accessToken, expiresAt } = await refreshAccessTokenFromCookies(freshCookies, profileId);
-                    if (accessToken) {
-                        await prisma.profile.update({
-                            where: { id: profileId },
-                            data: { accessToken, accessTokenExpires: expiresAt }
-                        });
-                        recovered = true;
-                        logger.info(`[GenNormal] auto-recovered profile ${profileId.substring(0, 8)} — token refreshed, requeuing job`);
-                    }
+                const { checkFlowSignIn } = await import('../../lib/flowBoq.js');
+                if ((await checkFlowSignIn(profileId, { fresh: true })) === 'signed-in') {
+                    recovered = true;
+                    logger.info(`[GenNormal] auto-recovered profile ${profileId.substring(0, 8)} — Flow accepts its cookies, requeuing job`);
                 }
             }
             catch (recoveryErr) {

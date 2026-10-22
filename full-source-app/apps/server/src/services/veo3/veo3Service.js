@@ -15,14 +15,16 @@ import { extractVerifiedBase64Image } from "../../utils/imagePayload.js";
 import { extractUUIDFromMediaId, normalizeReferenceImage, } from "../../utils/referenceImage.js";
 import { globalProxyManager } from "../../lib/GlobalProxyManager.js";
 import { googleFetch } from "./veo3HttpClient.js";
-import { pushFlowTelemetry } from "./flowTelemetryBuffer.js";
-import { callFlowRpc, FLOW_RPC, parseCreditsPayload } from "../../lib/flowBoq.js";
+import { callFlowRpc, FlowRpcError, FLOW_RPC, parseCreditsPayload } from "../../lib/flowBoq.js";
+import { buildVideoSubmitArgs, buildUpscaleArgs, parseMediaRow, parsePollResponse, parseVideoSubmitResponse, readUploadedImageSize, rememberImageSize, flowVideoModelKeyCandidates, modelKeySlot, acceptedKeyFor, rememberAcceptedKey, upscaledMediaId, upscaleResolutionOf, videoAspectCode, VIDEO_SUBMIT_RPC, } from "./flowVideoGen.js";
+import { buildGenerateImageArgs, classifyFlowGenError, classifyImageGenError, parseGenerateImageResponse, resolveAspectCode, UnsupportedFlowImageOptionError, } from "./flowImageGen.js";
 import { buildMaseQArgs, detectImageKind, extractUploadedMediaId, flowClientContext, toUploadError, } from "./flowUpload.js";
 import { sessionIdManager } from "../../lib/sessionIdManager.js";
 import { buildProxyAgents, evictProxyAgent, applyInterProfileJitter, } from "./veo3ProxyManager.js";
 import { getHostUa, getHostSecChUa, getHostSecChUaPlatform, } from "../../lib/hostChromeUa.js";
-/** Ảnh tới 30MB qua proxy — 30s mặc định của flowBoq không đủ. */
 const UPLOAD_IMAGE_TIMEOUT_MS = 120000;
+const VIDEO_SUBMIT_TIMEOUT_MS = 120000;
+const FLOW_POLL_TIMEOUT_MS = 30000;
 /**
  * Decode UUID from CAMa proto-base64 mediaId.
  * mediaId UUID extraction + referenceImages normalization live in a standalone
@@ -313,7 +315,7 @@ export class Veo3Service {
     constructor(config = {}) {
         this.baseUrl = "https://labs.google/fx/api/trpc";
         this.sandboxBaseUrl = "https://aisandbox-pa.googleapis.com/v1";
-        // Keep submit headers aligned with the real Chrome that owns the verification session.
+        // Default browser headers — version derived from host Chrome (VEO3_CHROME_FULL/MAJOR env).
         this.defaultHeaders = {
             "User-Agent": getHostUa(),
             "sec-ch-ua": getHostSecChUa(),
@@ -465,6 +467,7 @@ export class Veo3Service {
         const startTime = Date.now();
         const tokens = [];
         try {
+            // todo update logic gen capcha
             for (let i = 0; i < count; i++) {
                 const result = await captchaManager.requestToken(action);
                 if (!result.token || result.token.trim().length === 0) {
@@ -670,130 +673,6 @@ export class Veo3Service {
         return headers;
     }
     /**
-     * Push image-gen telemetry events into the per-profile FlowTelemetryBuffer
-     * (which batches + flushes on a delay, mirroring real Flow's network signature).
-     *
-     * Real Flow pattern (verified via captures/flowai-lifecycle-*.json):
-     *   - Per gen on the wire: ONLY `flowMedia:batchGenerateImages` + `/clr` (auto)
-     *   - `:batchLog` and `/flow:batchLogFrontendEvents` are flushed PERIODICALLY
-     *     with N events accumulated (a single capture POST contained 12+ events)
-     *
-     * Old per-gen-immediate-POST behaviour produced a per-gen telemetry burst
-     * (log → log → gen → log → log → log → log) that Google's reCAPTCHA Enterprise
-     * scoring flagged as bot, causing PUBLIC_ERROR_UNUSUAL_ACTIVITY 403 after the
-     * first 1–2 gens. See `flowTelemetryBuffer.ts` for the batching strategy.
-     *
-     * NOTE: `phase: 'before'` is intentionally a no-op now — real Flow does NOT
-     * fire any pre-gen telemetry tied to the user clicking Generate. The previous
-     * pre-gen FLOW_IMAGE_LATENCY with placeholder duration (`?? 300`) was a fake
-     * value with no real-browser counterpart and added a per-gen request that
-     * Google could fingerprint.
-     */
-    fireImageGenLogs(params) {
-        const { sessionId, imageModelName, aspectRatio, refImageCount, outputsPerPrompt, phase, latencyMs, } = params;
-        // Pre-gen: drop on the floor — real Flow does not emit this signal.
-        if (phase === "before")
-            return;
-        const profileId = this.config.profileId;
-        if (!profileId)
-            return;
-        const headers = this.getSandboxHeaders("application/json");
-        const userAgent = this.config.userAgent || this.defaultHeaders["User-Agent"];
-        const eventTime = new Date().toISOString();
-        const currentTimeMs = Date.now();
-        const settingsJson = JSON.stringify({
-            modelKey: imageModelName,
-            aspectRatio,
-            outputCount: outputsPerPrompt,
-            refImageCount,
-        });
-        const appEvents = [];
-        const frontendEvents = [];
-        appEvents.push({
-            event: "MEDIA_GENERATION",
-            eventProperties: [
-                { key: "MEDIA_GENERATION_TYPE", stringValue: "image" },
-                { key: "MEDIA_GENERATION_SETTINGS", stringValue: settingsJson },
-                {
-                    key: "MEDIA_GENERATION_PAYGATE_TIER",
-                    stringValue: "PAYGATE_TIER_TWO",
-                },
-                { key: "USER_AGENT", stringValue: userAgent },
-                { key: "IS_DESKTOP", booleanValue: true },
-            ],
-            eventMetadata: { sessionId },
-            eventTime,
-        });
-        frontendEvents.push({
-            eventType: "MEDIA_GENERATION",
-            metadata: {
-                sessionId,
-                createTime: eventTime,
-                additionalParams: {
-                    MEDIA_GENERATION_TYPE: {
-                        "@type": "type.googleapis.com/google.protobuf.StringValue",
-                        value: "image",
-                    },
-                    MEDIA_GENERATION_SETTINGS: {
-                        "@type": "type.googleapis.com/google.protobuf.StringValue",
-                        value: settingsJson,
-                    },
-                    MEDIA_GENERATION_PAYGATE_TIER: {
-                        "@type": "type.googleapis.com/google.protobuf.StringValue",
-                        value: "PAYGATE_TIER_TWO",
-                    },
-                    IS_DESKTOP: {
-                        "@type": "type.googleapis.com/google.protobuf.BoolValue",
-                        value: true,
-                    },
-                },
-            },
-        });
-        if (latencyMs !== undefined) {
-            appEvents.push({
-                event: "FLOW_IMAGE_LATENCY",
-                eventProperties: [
-                    { key: "CURRENT_TIME_MS", doubleValue: currentTimeMs },
-                    { key: "DURATION_MS", doubleValue: latencyMs },
-                    { key: "USER_AGENT", stringValue: userAgent },
-                    { key: "IS_DESKTOP", booleanValue: true },
-                ],
-                eventMetadata: { sessionId },
-                eventTime,
-            });
-            frontendEvents.push({
-                eventType: "FLOW_IMAGE_LATENCY",
-                metadata: {
-                    sessionId,
-                    createTime: eventTime,
-                    additionalParams: {
-                        CURRENT_TIME_MS: {
-                            "@type": "type.googleapis.com/google.protobuf.DoubleValue",
-                            value: currentTimeMs,
-                        },
-                        DURATION_MS: {
-                            "@type": "type.googleapis.com/google.protobuf.DoubleValue",
-                            value: latencyMs,
-                        },
-                        IS_DESKTOP: {
-                            "@type": "type.googleapis.com/google.protobuf.BoolValue",
-                            value: true,
-                        },
-                    },
-                },
-            });
-        }
-        pushFlowTelemetry({
-            profileId,
-            baseUrl: this.sandboxBaseUrl,
-            headers,
-            veo3ProjectId: this.config.veo3ProjectId,
-            locale: this.config.locale,
-            appEvents,
-            frontendEvents,
-        });
-    }
-    /**
      * ✅ Get access token từ session
      * GET /api/auth/session
      *
@@ -819,75 +698,11 @@ export class Veo3Service {
         return await response.json();
     }
     /**
-     * ✅ Get access token từ session với cookies từ profile
-     * GET /api/auth/session
-     *
-     * Lấy access token từ session sử dụng cookies từ profile.
-     *
-     * @param cookieHeader - Cookie header string (e.g., "name1=value1; name2=value2")
-     * @returns Session info bao gồm access_token, user info, và expires time
+     * ✅ Get Credits and Paygate Tier (Flow BOQ `nzlxg`)
      */
-    async getSessionWithCookies(_cookieHeader) {
-        const url = "https://labs.google/fx/api/auth/session";
-        // The cookieHeader param is intentionally ignored: googleFetch routes
-        // through the browser, which always uses its own session cookies via
-        // withCredentials. Param retained for backward call-site compatibility.
-        const headers = this.getTrpcHeaders();
-        const response = await googleFetch({
-            profileId: this.config.profileId,
-            veo3ProjectId: this.config.veo3ProjectId,
-            locale: this.config.locale,
-            url,
-            method: "GET",
-            headers,
-        });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to get session with cookies: ${response.statusText} - ${errorText}`);
-        }
-        const sessionData = await response.json();
-        return sessionData;
-    }
-    /**
-     * ✅ Helper: Get access token từ session
-     * Wrapper method để chỉ lấy access_token
-     */
-    async getAccessToken() {
-        const session = await this.getSession();
-        return session.access_token;
-    }
-    /**
-     * ✅ Helper: Get access token và tự động update vào config
-     * Tiện lợi để tự động refresh token và update vào service
-     */
-    async refreshAccessToken() {
-        logger.info(`🔄 [Veo3Service] Refreshing access token...`);
-        // Use cookies if available, otherwise use existing session
-        let session;
-        if (this.config.cookies) {
-            logger.info(`   Using cookies to get new session...`);
-            session = await this.getSessionWithCookies(this.config.cookies);
-        }
-        else {
-            logger.info(`   Using existing session to refresh...`);
-            session = await this.getSession();
-        }
-        const accessToken = session.access_token;
-        if (!accessToken) {
-            throw new Error("No access_token in session response");
-        }
-        logger.info(`   New token: ${accessToken.substring(0, 20)}...${accessToken.substring(accessToken.length - 10)}`);
-        this.updateConfig({ accessToken });
-        logger.info(`   Token updated in config: ${this.config.accessToken?.substring(0, 20)}...`);
-        // Notify caller about new token
-        if (this.config.onTokenRefreshed) {
-            logger.info(`   Calling onTokenRefreshed callback...`);
-            await this.config.onTokenRefreshed(accessToken);
-        }
-        return accessToken;
-    }
-    /** Get credits and paygate tier from Flow's cookie-authenticated BOQ RPC. */
     async getCredits() {
+        // aisandbox-pa /credits needs the ya29 Bearer, whose source (labs auth/session)
+        // answers 410. Flow's own `nzlxg` RPC returns the same numbers with cookies only.
         const profileId = this.config.profileId;
         if (!profileId)
             throw new Error("Thiếu profileId — không thể lấy credits từ Flow");
@@ -1001,673 +816,203 @@ export class Veo3Service {
         logger.info(`🔊 [Voice Presets] ${voices.length} giọng từ Flow`);
         return voices;
     }
-    async fetchMediaLibrary(options) {
-        const pageSize = options?.pageSize ?? 18;
-        const cursor = options?.cursor ?? null;
-        return this.executeWithTokenRefresh(async () => {
-            const inputPayload = {
-                json: {
-                    type: "ASSET_MANAGER",
-                    pageSize,
-                    responseScope: "RESPONSE_SCOPE_UNSPECIFIED",
-                    cursor,
-                },
-                meta: {
-                    values: {
-                        cursor: [cursor ?? "undefined"],
-                    },
-                },
-            };
-            const url = `${this.baseUrl}/media.fetchUserHistoryDirectly?input=${encodeURIComponent(JSON.stringify(inputPayload))}`;
-            const response = await googleFetch({
-                profileId: this.config.profileId,
-                veo3ProjectId: this.config.veo3ProjectId,
-                locale: this.config.locale,
-                url,
-                method: "GET",
-                headers: this.getTrpcHeaders(),
-            });
-            if (!response.ok) {
-                const errorText = await response.text();
-                if (response.status === 401 || response.status === 403) {
-                    const error = new Error("UNAUTHORIZED");
-                    error.response = response;
-                    error.errorText = errorText;
-                    throw error;
-                }
-                throw new Error(`Failed to fetch media library: ${response.statusText} - ${errorText}`);
+    /**
+     * Shared submit for the four generation modes. One reCAPTCHA token per request (single
+     * use, so a retry inside `callFlowRpc` mints a new one); requests go out one after
+     * another like the web client's.
+     */
+    async submitVideoViaFlow(mode, request, onRecaptchaComplete, onSubmitFired) {
+        const profileId = this.config.profileId;
+        if (!profileId)
+            throw new Error("Thiếu profileId — không thể gen video trên Flow");
+        const projectId = request.clientContext?.projectId;
+        if (!projectId)
+            throw new Error("Thiếu Veo3 projectId — không thể gen video trên Flow");
+        // reCAPTCHA is bound to the project page the browser loads.
+        this.updateConfig({ veo3ProjectId: projectId });
+        const count = request.requests.length;
+        const tokens = await this.requestRecaptchaTokens("VIDEO_GENERATION", count);
+        if (tokens.length < count) {
+            throw new Error(`Batch tokens insufficient for video: got ${tokens.length}, need ${count}`);
+        }
+        if (onRecaptchaComplete) {
+            try {
+                await onRecaptchaComplete();
             }
-            return response.json();
-        });
-    }
-    // COMMENTED OUT: fetchMediaDetail is no longer needed
-    // After uploading images, we already have all necessary information and save images correctly for each profile
-    // No need to verify mediaIds - they are already validated during upload
-    // async fetchMediaDetail(mediaName: string): Promise<MediaDetailResponse> {
-    //   if (!mediaName) {
-    //     throw new Error('mediaName is required to fetch media detail');
-    //   }
-    //   return this.executeWithTokenRefresh(async () => {
-    //     // URL format: /v1/media/{mediaName}?key=...&clientContext.tool=PINHOLE
-    //     // The key parameter appears to be a public API key (same for all requests)
-    //     const encodedName = encodeURIComponent(mediaName);
-    //     // Using the API key from curl example - this appears to be a public key
-    //     const apiKey = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
-    //     const url = `${this.sandboxBaseUrl}/media/${encodedName}?key=${apiKey}&clientContext.tool=PINHOLE`;
-    //     const headers = this.getSandboxHeaders('application/json');
-    //     // Add authentication headers for sandbox API
-    //     if (this.config.accessToken) {
-    //       headers['Authorization'] = `Bearer ${this.config.accessToken}`;
-    //     }
-    //     if (this.config.cookies) {
-    //       headers['Cookie'] = this.config.cookies;
-    //     }
-    //     const response = await fetch(url, {
-    //       method: 'GET',
-    //       headers,
-    //     });
-    //     if (!response.ok) {
-    //       const errorText = await response.text();
-    //       if (response.status === 401 || response.status === 403) {
-    //         const error: any = new Error('UNAUTHORIZED');
-    //         error.response = response;
-    //         error.errorText = errorText;
-    //         throw error;
-    //       }
-    //       // Log detailed error for debugging
-    //       logger.error(`[Veo3Service] fetchMediaDetail failed:`, {
-    //         mediaName: mediaName.substring(0, 50) + '...',
-    //         status: response.status,
-    //         statusText: response.statusText,
-    //         errorText: errorText.substring(0, 200),
-    //         headers: Object.fromEntries(response.headers.entries())
-    //       });
-    //       throw new Error(`Failed to fetch media detail: ${response.statusText} - ${errorText}`);
-    //     }
-    //     const result = await response.json();
-    //     // Only log if fifeUrl is missing (for debugging)
-    //     const hasFifeUrl = result?.image?.fifeUrl || (result as any)?.userUploadedImage?.fifeUrl;
-    //     if (!hasFifeUrl) {
-    //       logger.warn(`⚠️  [Media Detail] No fifeUrl found. Has image: ${!!result?.image}, Has userUploadedImage: ${!!(result as any)?.userUploadedImage}`);
-    //     }
-    //     return result;
-    //   });
-    // }
-    /**
-     * Fetch user preferences (TRPC API - phụ, không trực tiếp tạo video)
-     * GET /api/trpc/general.fetchUserPreferences
-     * Chỉ dùng để lấy user preferences, không ảnh hưởng đến video generation
-     */
-    async fetchUserPreferences() {
-        const url = `${this.baseUrl}/general.fetchUserPreferences?input=%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%7D%7D`;
-        const response = await googleFetch({
-            profileId: this.config.profileId,
-            veo3ProjectId: this.config.veo3ProjectId,
-            locale: this.config.locale,
-            url,
-            method: "GET",
-            headers: this.getTrpcHeaders(),
-        });
-        if (!response.ok) {
-            throw new Error(`Failed to fetch user preferences: ${response.statusText}`);
+            catch (_) {
+                /* non-blocking */
+            }
         }
-        return await response.json();
-    }
-    /**
-     * Submit batch log (TRPC API - phụ, chỉ dùng cho analytics/logging)
-     * POST /api/trpc/general.submitBatchLog
-     * Chỉ dùng để gửi analytics events, không trực tiếp tạo video
-     */
-    async submitBatchLog(logData) {
-        const url = `${this.baseUrl}/general.submitBatchLog`;
-        const response = await googleFetch({
-            profileId: this.config.profileId,
-            veo3ProjectId: this.config.veo3ProjectId,
-            locale: this.config.locale,
-            url,
-            method: "POST",
-            headers: this.getTrpcHeaders(),
-            body: JSON.stringify({ json: logData }),
-        });
-        if (!response.ok) {
-            throw new Error(`Failed to submit batch log: ${response.statusText}`);
+        const operations = [];
+        for (let i = 0; i < count; i++) {
+            const item = request.requests[i];
+            const prompt = item.textInput.prompt ?? (item.textInput.structuredPrompt?.parts ?? []).map((p) => p.text).join("");
+            const aspectCode = videoAspectCode(item.aspectRatio);
+            const slot = modelKeySlot(mode, item.videoModelKey);
+            const remembered = acceptedKeyFor(slot);
+            const candidates = remembered
+                ? [{ key: remembered, verified: true }]
+                : flowVideoModelKeyCandidates({ legacyKey: item.videoModelKey, mode });
+            // A key Flow does not know is refused with INVALID_ARGUMENT before anything is
+            // charged, so walk the candidates; every attempt needs its own single-use token.
+            let payload;
+            let usedKey = candidates[0].key;
+            for (let c = 0; c < candidates.length; c++) {
+                const { key, verified } = candidates[c];
+                usedKey = key;
+                if (!verified)
+                    logger.warn(`[Video] thử khoá model ${key} (từ ${item.videoModelKey}) — chưa kiểm chứng với Flow`);
+                // The pre-minted token serves the very first send only; every later send needs a new one.
+                let premintConsumed = c > 0;
+                const buildArgs = async () => {
+                    const recaptchaToken = premintConsumed ? (await this.requestRecaptchaTokens("VIDEO_GENERATION", 1))[0] : tokens[i];
+                    premintConsumed = true;
+                    return buildVideoSubmitArgs({
+                        mode,
+                        projectId,
+                        prompt,
+                        modelKey: key,
+                        aspectCode,
+                        recaptchaToken,
+                        startMediaId: item.startImage ? extractUUIDFromMediaId(item.startImage.mediaId) : undefined,
+                        endMediaId: item.endImage ? extractUUIDFromMediaId(item.endImage.mediaId) : undefined,
+                        referenceMediaIds: item.referenceImages?.map((r) => extractUUIDFromMediaId(r.mediaId)),
+                        referenceAudioIds: item.referenceAudio?.map((a) => a.mediaId),
+                    });
+                };
+                if (i === 0 && c === 0)
+                    onSubmitFired?.();
+                try {
+                    payload = await callFlowRpc(profileId, VIDEO_SUBMIT_RPC[mode], buildArgs, {
+                        userAgent: this.config.userAgent,
+                        sourcePath: `/project/${projectId}`,
+                        timeoutMs: VIDEO_SUBMIT_TIMEOUT_MS,
+                    });
+                    break;
+                }
+                catch (err) {
+                    // 3 = INVALID_ARGUMENT, 5 = NOT_FOUND: both are how Flow refuses an unknown model key.
+                    const rejectedKey = err instanceof FlowRpcError && (err.status === 3 || err.status === 5) && c < candidates.length - 1;
+                    if (rejectedKey) {
+                        logger.warn(`[Video] Flow từ chối khoá ${key} (mã ${err.status}) — thử khoá kế tiếp`);
+                        continue;
+                    }
+                    const classified = classifyFlowGenError(err);
+                    logger.error(`❌ [Video] ${mode} request ${i + 1}/${count} lỗi: ${classified?.message ?? classified}`, {
+                        model: key,
+                        project: projectId,
+                    });
+                    throw classified;
+                }
+            }
+            rememberAcceptedKey(slot, usedKey);
+            const parsed = parseVideoSubmitResponse(payload);
+            if (parsed.operations.length === 0) {
+                throw new Error(`Flow không trả operation cho video: ${JSON.stringify(payload)?.slice(0, 160)}`);
+            }
+            const sceneId = item.metadata?.sceneId ?? "";
+            operations.push(...this.convertMediaArrayToSubmitOperations(parsed.operations.map((o) => ({ name: o.operationId, projectId, workflowId: o.workflowId })), sceneId));
         }
-        return await response.json();
+        return { operations };
     }
     /**
-     * ✅ API CHÍNH: Submit job generate video
-     * POST /v1/video:batchAsyncGenerateVideoText
+     * Submit video generation (text-to-video) through Flow's `generateVideoText` batchexecute rpc
+     * (cookie-authenticated; aisandbox-pa and its Bearer are gone).
      *
-     * Đây là API chính để tạo video. Trả về operation name để dùng cho check status.
-     *
-     * @returns operation name (dùng để poll status)
+     * @returns operations to poll — same shape the queue already consumes
      */
     async batchAsyncGenerateVideoText(request, onRecaptchaComplete, onSubmitFired) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for video generation");
-        }
-        // ⚠️ Sync veo3ProjectId vào config trước khi gọi reCAPTCHA — nếu không, browser
-        // sẽ load homepage thay vì project page → action↔location mismatch → 403.
-        if (request.clientContext?.projectId) {
-            this.updateConfig({ veo3ProjectId: request.clientContext.projectId });
-        }
-        return this.executeWithTokenRefresh(async () => {
-            const url = `${this.sandboxBaseUrl}/video:batchAsyncGenerateVideoText`;
-            logger.info(`📤 [API Monitor] Submitting video generation request (Text-to-Video)`, {
-                projectId: request.clientContext?.projectId || "N/A",
-                requestsCount: request.requests?.length || 0,
-            });
-            const batchId = crypto.randomUUID();
-            const allOperations = [];
-            const requestsCount = request.requests?.length || 0;
-            // ⚠️ Lấy N token cùng lúc trong 1 browser session — đảm bảo cùng UA, cookies,
-            // project page, warmth state. Tránh queue serialize + tránh delay token→API gap dài.
-            const batchTokenResult = await this.requestRecaptchaTokens("VIDEO_GENERATION", requestsCount);
-            if (batchTokenResult.length < requestsCount) {
-                throw new Error(`Batch tokens insufficient for video: got ${batchTokenResult.length}, need ${requestsCount}`);
-            }
-            // 🔔 Callback ngay khi đã có toàn bộ token (UI cập nhật progress 1 lần thay vì nhiều lần)
-            if (onRecaptchaComplete) {
-                try {
-                    await onRecaptchaComplete();
-                }
-                catch (_) {
-                    /* non-blocking */
-                }
-            }
-            for (let i = 0; i < requestsCount; i++) {
-                const reqItem = request.requests[i];
-                const tokenForThisRequest = batchTokenResult[i];
-                const singleRequestBody = {
-                    clientContext: {
-                        ...request.clientContext,
-                        recaptchaContext: {
-                            token: tokenForThisRequest,
-                            applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                        },
-                    },
-                    mediaGenerationContext: {
-                        batchId: batchId,
-                        audioFailurePreference: request.mediaGenerationContext?.audioFailurePreference ??
-                            "BLOCK_SILENCED_VIDEOS",
-                    },
-                    ...(request.useV2ModelConfig ? { useV2ModelConfig: true } : {}),
-                    requests: [
-                        {
-                            ...reqItem,
-                        },
-                    ],
-                };
-                const xhrPromise = googleFetch({
-                    profileId: this.config.profileId,
-                    veo3ProjectId: this.config.veo3ProjectId,
-                    locale: this.config.locale,
-                    url,
-                    method: "POST",
-                    // Cross-origin call to aisandbox-pa.googleapis.com — must use Sandbox
-                    // headers (User-Agent matched to mint Chrome version + root Referer).
-                    // Previous getTrpcHeaders() left Chrome 148 fallback UA + project URL
-                    // referer, both of which Google's reCAPTCHA pipeline scored as bot.
-                    headers: this.getSandboxHeaders("application/json"),
-                    body: JSON.stringify(singleRequestBody),
-                    // Keep submit -> clr in the same page execution block to avoid
-                    // out-of-band reset races on the wire.
-                });
-                // 🔓 Browser captcha lifecycle complete (1st request): XHR fired + clr sent.
-                // Release caller's browser lock → next profile's captcha can safely start.
-                if (i === 0)
-                    onSubmitFired?.();
-                let response;
-                try {
-                    response = await xhrPromise;
-                }
-                finally {
-                }
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`📥 [API Monitor] Request ${i + 1}/${requestsCount} response status: ${response.status} ${response.statusText}`);
-                }
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    const isRecaptcha403 = response.status === 403 &&
-                        (errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY") ||
-                            errorText.includes("reCAPTCHA evaluation failed"));
-                    if (isRecaptcha403) {
-                        logger.warn(`⚠️ [API Monitor] Request ${i + 1}/${requestsCount} → 403 reCAPTCHA (silent retry)`);
-                    }
-                    else {
-                        logger.error(`❌ [API Monitor] Request ${i + 1}/${requestsCount} API Error: ${response.status} - ${errorText.substring(0, 500)}`);
-                    }
-                    if (isRecaptcha403) {
-                        const error = new Error(`reCAPTCHA bị Google từ chối (Mã 403): Browser session score thấp. Profile sẽ được reset và thử lại.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isRecaptchaFailure = true;
-                        throw error;
-                    }
-                    if (this.isAuthError(response, errorText)) {
-                        const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                        error.response = response;
-                        error.errorText = errorText;
-                        throw error;
-                    }
-                    throw buildVeoApiError(`Failed to generate video (request ${i + 1}/${requestsCount})`, response, errorText);
-                }
-                const responseData = await response.json();
-                // Veo 3.1 lite tier có thể trả `{media:[...]}` thay vì `{operations:[...]}`
-                // — fallback sang submit converter để upstream lưu providerJobId đúng.
-                if (responseData.operations && responseData.operations.length > 0) {
-                    allOperations.push(...responseData.operations);
-                }
-                else if (Array.isArray(responseData.media) &&
-                    responseData.media.length > 0) {
-                    const ourSceneId = reqItem?.metadata?.sceneId || "";
-                    allOperations.push(...this.convertMediaArrayToSubmitOperations(responseData.media, ourSceneId));
-                }
-            }
-            // "✅ Video generation requests completed" log dropped — TLS Submit
-            // already shows transport/status/bytes/duration for each request.
-            return { operations: allOperations };
-        });
+        return this.submitVideoViaFlow("t2v", request, onRecaptchaComplete, onSubmitFired);
     }
     /**
-     * ✅ API: Submit job generate video với reference images
-     * POST /v1/video:batchAsyncGenerateVideoReferenceImages
+     * Submit video generation (reference-to-video) through Flow's `generateVideoReferences` batchexecute rpc
+     * (cookie-authenticated; aisandbox-pa and its Bearer are gone).
      *
-     * Đây là API để tạo video với reference images (đã upload lên Veo3).
-     * Sử dụng khi có mediaGenerationId từ characters.
-     *
-     * API spec: Content-Type: application/json (khác với batchAsyncGenerateVideoText dùng text/plain)
-     *
-     * @returns operation name (dùng để poll status)
+     * @returns operations to poll — same shape the queue already consumes
      */
     async batchAsyncGenerateVideoReferenceImages(request, onRecaptchaComplete, onSubmitFired) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for video generation");
-        }
-        // ⚠️ Sync veo3ProjectId vào config trước khi gọi reCAPTCHA (xem comment ở batchAsyncGenerateVideoText)
-        if (request.clientContext?.projectId) {
-            this.updateConfig({ veo3ProjectId: request.clientContext.projectId });
-        }
-        return this.executeWithTokenRefresh(async () => {
-            const url = `${this.sandboxBaseUrl}/video:batchAsyncGenerateVideoReferenceImages`;
-            logger.info(`📤 [API Monitor] Submit video (Reference Images) count=${request.requests?.length || 0} project=${request.clientContext?.projectId?.substring(0, 12) || "N/A"}`);
-            const batchId = crypto.randomUUID();
-            const allOperations = [];
-            const requestsCount = request.requests?.length || 0;
-            // Lấy N token cùng lúc trong 1 browser session (tránh queue serialize + token gap dài)
-            const batchTokenResult = await this.requestRecaptchaTokens("VIDEO_GENERATION", requestsCount);
-            if (batchTokenResult.length < requestsCount) {
-                throw new Error(`Batch tokens insufficient for video-ref: got ${batchTokenResult.length}, need ${requestsCount}`);
-            }
-            if (onRecaptchaComplete) {
-                try {
-                    await onRecaptchaComplete();
-                }
-                catch (_) {
-                    /* non-blocking */
-                }
-            }
-            for (let i = 0; i < requestsCount; i++) {
-                const reqItem = request.requests[i];
-                const tokenForThisRequest = batchTokenResult[i];
-                // Normalize referenceImages to the proven-working Flow contract
-                // (flat-UUID mediaId + explicit imageUsageType). See normalizeReferenceImage.
-                const normalizedRefs = Array.isArray(reqItem.referenceImages)
-                    ? reqItem.referenceImages.map((r) => normalizeReferenceImage(r))
-                    : reqItem.referenceImages;
-                const singleRequestBody = {
-                    clientContext: {
-                        ...request.clientContext,
-                        recaptchaContext: {
-                            token: tokenForThisRequest,
-                            applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                        },
-                    },
-                    mediaGenerationContext: {
-                        batchId: batchId,
-                        // Default giữ nguyên BLOCK: workflow.engine có caller chỉ gửi `{batchId}` và đang
-                        // dựa vào hành vi này — đổi default sẽ âm thầm đổi kết quả Flow workflow.
-                        audioFailurePreference: request.mediaGenerationContext?.audioFailurePreference ??
-                            "BLOCK_SILENCED_VIDEOS",
-                    },
-                    ...(request.useV2ModelConfig ? { useV2ModelConfig: true } : {}),
-                    requests: [
-                        {
-                            ...reqItem,
-                            ...(normalizedRefs ? { referenceImages: normalizedRefs } : {}),
-                        },
-                    ],
-                };
-                // Slim submit log — full body contains a 2KB+ reCAPTCHA token + prompt;
-                // dumping it per job spams stdout. Set VEO3_LOG_SUBMIT_BODY=1 if you
-                // genuinely need the raw payload for debugging.
-                if (process.env.VEO3_LOG_SUBMIT_BODY === "1") {
-                    logger.info(JSON.stringify(singleRequestBody));
-                }
-                else {
-                    const firstReq = singleRequestBody.requests?.[0];
-                    const refDiag = Array.isArray(firstReq?.referenceImages)
-                        ? firstReq.referenceImages
-                            .map((r) => `${String(r?.mediaId ?? "?").slice(0, 8)}:${r?.imageUsageType ?? "none"}`)
-                            .join(",")
-                        : "";
-                    logger.info(`📤 [Veo3Service] submit ${firstReq?.videoModelKey ?? "?"} aspect=${firstReq?.aspectRatio ?? "?"} sceneId=${firstReq?.metadata?.sceneId?.slice(0, 8) ?? "?"} refs=${firstReq?.referenceImages?.length ?? 0}[${refDiag}] promptLen=${(firstReq?.textInput?.prompt ?? firstReq?.structuredPrompt?.parts?.[0]?.text ?? "").length}`);
-                }
-                const xhrPromise2 = googleFetch({
-                    profileId: this.config.profileId,
-                    veo3ProjectId: this.config.veo3ProjectId,
-                    locale: this.config.locale,
-                    url,
-                    method: "POST",
-                    headers: this.getSandboxHeaders("application/json"),
-                    body: JSON.stringify(singleRequestBody),
-                    // Keep submit -> clr in the same page execution block to avoid
-                    // out-of-band reset races on the wire.
-                });
-                // 🔓 Browser captcha lifecycle complete (1st request): XHR fired + clr sent.
-                if (i === 0)
-                    onSubmitFired?.();
-                let response;
-                try {
-                    response = await xhrPromise2;
-                }
-                finally {
-                }
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`📥 [API Monitor] Request ${i + 1}/${requestsCount} response status: ${response.status} ${response.statusText}`);
-                }
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    const isRecaptcha403 = response.status === 403 &&
-                        (errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY") ||
-                            errorText.includes("reCAPTCHA evaluation failed"));
-                    if (isRecaptcha403) {
-                        logger.warn(`⚠️ [API Monitor] Request ${i + 1}/${requestsCount} → 403 reCAPTCHA (silent retry)`);
-                    }
-                    else {
-                        logger.error(`❌ [API Monitor] Request ${i + 1}/${requestsCount} API Error: ${response.status} - ${errorText.substring(0, 500)}`);
-                    }
-                    if (isRecaptcha403) {
-                        const error = new Error(`reCAPTCHA bị Google từ chối (Mã 403): Browser session score thấp. Profile sẽ được reset và thử lại.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isRecaptchaFailure = true;
-                        throw error;
-                    }
-                    if (this.isAuthError(response, errorText)) {
-                        const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                        error.response = response;
-                        error.errorText = errorText;
-                        throw error;
-                    }
-                    throw buildVeoApiError(`Failed to generate video with reference images (request ${i + 1}/${requestsCount})`, response, errorText);
-                }
-                const responseData = await response.json();
-                // Veo 3.1 r2v API trả về shape mới `{remainingCredits, workflows, media}`
-                // thay vì `{operations}`. Convert sang legacy operations[] shape để
-                // upstream queue manager (sceneIdToJobMap, processVideoStatusResult)
-                // không cần biết về shape mới.
-                if (responseData.operations && responseData.operations.length > 0) {
-                    allOperations.push(...responseData.operations);
-                }
-                else if (Array.isArray(responseData.media) &&
-                    responseData.media.length > 0) {
-                    const ourSceneId = reqItem?.metadata?.sceneId || "";
-                    allOperations.push(...this.convertMediaArrayToSubmitOperations(responseData.media, ourSceneId));
-                }
-            }
-            // "✅ Video generation reference images completed" log dropped — TLS Submit covers it.
-            return { operations: allOperations };
-        });
+        return this.submitVideoViaFlow("r2v", request, onRecaptchaComplete, onSubmitFired);
     }
     /**
-     * ✅ API: Generate video from start image (image-to-video)
-     * POST /v1/video:batchAsyncGenerateVideoStartImage
+     * Submit video generation (image-to-video) through Flow's `generateVideoStartImage` batchexecute rpc
+     * (cookie-authenticated; aisandbox-pa and its Bearer are gone).
      *
-     * Đây là API để tạo video từ ảnh bắt đầu (start image).
-     * Sử dụng khi có mediaId từ frame cuối của video trước đó.
-     *
-     * API spec: Content-Type: text/plain;charset=UTF-8 (giống batchAsyncGenerateVideoText)
-     *
-     * @returns operation name (dùng để poll status)
+     * @returns operations to poll — same shape the queue already consumes
      */
     async batchAsyncGenerateVideoStartImage(request, onRecaptchaComplete, onSubmitFired) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for video generation");
-        }
-        // ⚠️ Sync veo3ProjectId vào config trước khi gọi reCAPTCHA
-        if (request.clientContext?.projectId) {
-            this.updateConfig({ veo3ProjectId: request.clientContext.projectId });
-        }
-        return this.executeWithTokenRefresh(async () => {
-            const url = `${this.sandboxBaseUrl}/video:batchAsyncGenerateVideoStartImage`;
-            const firstReqSi = request.requests?.[0];
-            logger.info(`📤 [API Monitor] Submit video (Start Image) count=${request.requests?.length || 0} project=${request.clientContext?.projectId?.substring(0, 12) || "N/A"} model=${firstReqSi?.videoModelKey || "N/A"} aspect=${firstReqSi?.aspectRatio || "N/A"} promptLen=${firstReqSi?.textInput?.prompt?.length || 0}${firstReqSi?.startImage?.mediaId ? ` startImg=${firstReqSi.startImage.mediaId.substring(0, 12)}` : ""}`);
-            const batchId = crypto.randomUUID();
-            const allOperations = [];
-            const requestsCount = request.requests?.length || 0;
-            const batchTokenResult = await this.requestRecaptchaTokens("VIDEO_GENERATION", requestsCount);
-            if (batchTokenResult.length < requestsCount) {
-                throw new Error(`Batch tokens insufficient for video-startimage: got ${batchTokenResult.length}, need ${requestsCount}`);
-            }
-            if (onRecaptchaComplete) {
-                try {
-                    await onRecaptchaComplete();
-                }
-                catch (_) {
-                    /* non-blocking */
-                }
-            }
-            for (let i = 0; i < requestsCount; i++) {
-                const reqItem = request.requests[i];
-                const tokenForThisRequest = batchTokenResult[i];
-                const singleRequestBody = {
-                    clientContext: {
-                        ...request.clientContext,
-                        recaptchaContext: {
-                            token: tokenForThisRequest,
-                            applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                        },
-                    },
-                    mediaGenerationContext: {
-                        batchId: batchId,
-                        // Trước đây hàm này tự dựng `{ batchId }` và VỨT MẤT audioFailurePreference caller
-                        // truyền vào → request lên Google thiếu hẳn field mà browser luôn gửi. Honour caller.
-                        audioFailurePreference: request.mediaGenerationContext?.audioFailurePreference ??
-                            "BLOCK_SILENCED_VIDEOS",
-                    },
-                    ...(request.useV2ModelConfig ? { useV2ModelConfig: true } : {}),
-                    requests: [
-                        {
-                            ...reqItem,
-                        },
-                    ],
-                };
-                const xhrPromise3 = googleFetch({
-                    profileId: this.config.profileId,
-                    veo3ProjectId: this.config.veo3ProjectId,
-                    locale: this.config.locale,
-                    url,
-                    method: "POST",
-                    headers: this.getSandboxHeaders("text/plain;charset=UTF-8"),
-                    body: JSON.stringify(singleRequestBody),
-                    // Keep submit -> clr in the same page execution block to avoid
-                    // out-of-band reset races on the wire.
-                });
-                // 🔓 Browser captcha lifecycle complete (1st request): XHR fired + clr sent.
-                if (i === 0)
-                    onSubmitFired?.();
-                let response;
-                try {
-                    response = await xhrPromise3;
-                }
-                finally {
-                }
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`📥 [API Monitor] Request ${i + 1}/${requestsCount} response status: ${response.status} ${response.statusText}`);
-                }
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    const isRecaptcha403 = response.status === 403 &&
-                        (errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY") ||
-                            errorText.includes("reCAPTCHA evaluation failed"));
-                    if (isRecaptcha403) {
-                        logger.warn(`⚠️ [API Monitor] Request ${i + 1}/${requestsCount} → 403 reCAPTCHA (silent retry)`);
-                    }
-                    else {
-                        logger.error(`❌ [API Monitor] Request ${i + 1}/${requestsCount} API Error: ${response.status} - ${errorText.substring(0, 500)}`);
-                    }
-                    if (isRecaptcha403) {
-                        const error = new Error(`reCAPTCHA bị Google từ chối (Mã 403): Browser session score thấp. Profile sẽ được reset và thử lại.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isRecaptchaFailure = true;
-                        throw error;
-                    }
-                    if (this.isAuthError(response, errorText)) {
-                        const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                        error.response = response;
-                        error.errorText = errorText;
-                        throw error;
-                    }
-                    throw buildVeoApiError(`Failed to generate video with start image (request ${i + 1}/${requestsCount})`, response, errorText);
-                }
-                const responseData = await response.json();
-                // Veo 3.1 lite tier có thể trả `{media:[...]}` thay vì `{operations:[...]}`
-                // — fallback sang submit converter để upstream lưu providerJobId đúng.
-                if (responseData.operations && responseData.operations.length > 0) {
-                    allOperations.push(...responseData.operations);
-                }
-                else if (Array.isArray(responseData.media) &&
-                    responseData.media.length > 0) {
-                    const ourSceneId = reqItem?.metadata?.sceneId || "";
-                    allOperations.push(...this.convertMediaArrayToSubmitOperations(responseData.media, ourSceneId));
-                }
-            }
-            // "✅ Video generation start image completed" log dropped — TLS Submit covers it.
-            return { operations: allOperations };
-        });
+        return this.submitVideoViaFlow("i2v", request, onRecaptchaComplete, onSubmitFired);
     }
     /**
-     * ✅ API: Upsample video to 1080p
-     * POST /v1/video:batchAsyncGenerateVideoUpsampleVideo
+     * Upscale a generated video to 1080p or 4K through Flow's `p0UkFb` rpc (cookie-authenticated).
+     * 1080p costs nothing on Ultra, 4K costs 50 credits. The upscaled copy gets the id
+     * `<source>_upsampled` / `<source>_4k_upsampled` and is polled like any other media.
      *
-     * Đây là API để upsampling video lên 1080p.
-     * Sử dụng model veo_2_1080p_upsampler_8s.
-     *
-     * API spec: Content-Type: application/json
-     *
-     * @returns operation name (dùng để poll status)
+     * @returns operations to poll
      */
     async batchAsyncGenerateVideoUpsampleVideo(request) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for video upsampling");
+        const profileId = this.config.profileId;
+        if (!profileId)
+            throw new Error("Thiếu profileId — không thể upscale video trên Flow");
+        const projectId = request.clientContext?.projectId ?? this.config.veo3ProjectId;
+        if (!projectId)
+            throw new Error("Thiếu Veo3 projectId — không thể upscale video trên Flow");
+        this.updateConfig({ veo3ProjectId: projectId });
+        const count = request.requests.length;
+        const tokens = await this.requestRecaptchaTokens("VIDEO_GENERATION", count);
+        if (tokens.length < count) {
+            throw new Error(`Batch tokens insufficient for upscale: got ${tokens.length}, need ${count}`);
         }
-        // ⚠️ Sync veo3ProjectId vào config trước khi gọi reCAPTCHA
-        if (request.clientContext?.projectId) {
-            this.updateConfig({ veo3ProjectId: request.clientContext.projectId });
-        }
-        return this.executeWithTokenRefresh(async () => {
-            const url = `${this.sandboxBaseUrl}/video:batchAsyncGenerateVideoUpsampleVideo`;
-            logger.info(`📤 [API Monitor] Submit video upsampling count=${request.requests?.length || 0} project=${request.clientContext?.projectId?.substring(0, 12) || "N/A"}`);
-            const batchId = crypto.randomUUID();
-            const allOperations = [];
-            const requestsCount = request.requests?.length || 0;
-            const batchTokenResult = await this.requestRecaptchaTokens("VIDEO_GENERATION", requestsCount);
-            if (batchTokenResult.length < requestsCount) {
-                throw new Error(`Batch tokens insufficient for upsample: got ${batchTokenResult.length}, need ${requestsCount}`);
+        const operations = [];
+        for (let i = 0; i < count; i++) {
+            const item = request.requests[i];
+            const workflowId = item.metadata?.workflowId;
+            if (!workflowId) {
+                throw new Error("Upscale video cần metadata.workflowId của video nguồn (Flow không nhận sceneId).");
             }
-            for (let i = 0; i < requestsCount; i++) {
-                const reqItem = request.requests[i];
-                const tokenForThisRequest = batchTokenResult[i];
-                const singleRequestBody = {
-                    clientContext: {
-                        ...request.clientContext,
-                        recaptchaContext: {
-                            token: tokenForThisRequest,
-                            applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                        },
-                    },
-                    // Merge caller's mediaGenerationContext (e.g. audioFailurePreference
-                    // from Veo 3.1 upsampler) — batchId luôn override.
-                    mediaGenerationContext: {
-                        ...(request.mediaGenerationContext || {}),
-                        batchId: batchId,
-                    },
-                    ...(request.useV2ModelConfig ? { useV2ModelConfig: true } : {}),
-                    requests: [
-                        {
-                            ...reqItem,
-                        },
-                    ],
-                };
-                const xhrPromise4 = googleFetch({
-                    profileId: this.config.profileId,
-                    veo3ProjectId: this.config.veo3ProjectId,
-                    locale: this.config.locale,
-                    url,
-                    method: "POST",
-                    headers: this.getSandboxHeaders("application/json"),
-                    body: JSON.stringify(singleRequestBody),
-                    // Keep submit -> clr in the same page execution block to avoid
-                    // out-of-band reset races on the wire.
+            const resolution = upscaleResolutionOf(item.resolution, item.videoModelKey);
+            const sourceMediaId = extractUUIDFromMediaId(item.videoInput.mediaId);
+            // The upscale must carry the SOURCE video's aspect. Flow does not cross-check it, so a
+            // wrong value (e.g. the project setting changed after the video was made) yields a
+            // stretched output. Ask the media itself; fall back to the request only if that fails.
+            const sourceAspect = await this.readSourceAspect(profileId, sourceMediaId);
+            const requestedAspect = (() => {
+                try {
+                    return videoAspectCode(item.aspectRatio);
+                }
+                catch {
+                    return undefined;
+                }
+            })();
+            if (sourceAspect && requestedAspect && sourceAspect !== requestedAspect) {
+                logger.warn(`[Upscale] tỉ lệ yêu cầu (${requestedAspect}) khác tỉ lệ video nguồn (${sourceAspect}) — dùng tỉ lệ của video nguồn`, { sourceMediaId });
+            }
+            const aspectCode = sourceAspect ?? requestedAspect ?? 2;
+            let firstAttempt = true;
+            const buildArgs = async () => {
+                const recaptchaToken = firstAttempt
+                    ? tokens[i]
+                    : (await this.requestRecaptchaTokens("VIDEO_GENERATION", 1))[0];
+                firstAttempt = false;
+                return buildUpscaleArgs({ projectId, sourceMediaId, workflowId, resolution, aspectCode, recaptchaToken });
+            };
+            let payload;
+            try {
+                payload = await callFlowRpc(profileId, FLOW_RPC.upsampleVideo, buildArgs, {
+                    userAgent: this.config.userAgent,
+                    sourcePath: `/project/${projectId}`,
+                    timeoutMs: VIDEO_SUBMIT_TIMEOUT_MS,
                 });
-                // Upsample không nhận onSubmitFired callback — caller (VideoUpsamplingHandler)
-                // tự release shared browser lock sau khi promise này resolve.
-                let response;
-                response = await xhrPromise4;
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`📥 [API Monitor] Request ${i + 1}/${requestsCount} response status: ${response.status} ${response.statusText}`);
-                }
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    const isRecaptcha403 = response.status === 403 &&
-                        (errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY") ||
-                            errorText.includes("reCAPTCHA evaluation failed"));
-                    if (isRecaptcha403) {
-                        logger.warn(`⚠️ [API Monitor] Request ${i + 1}/${requestsCount} → 403 reCAPTCHA (silent retry)`);
-                    }
-                    else {
-                        logger.error(`❌ [API Monitor] Request ${i + 1}/${requestsCount} API Error: ${response.status} - ${errorText.substring(0, 500)}`);
-                    }
-                    if (isRecaptcha403) {
-                        const error = new Error(`reCAPTCHA bị Google từ chối (Mã 403): Browser session score thấp. Profile sẽ được reset và thử lại.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isRecaptchaFailure = true;
-                        throw error;
-                    }
-                    if (this.isAuthError(response, errorText)) {
-                        const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                        error.response = response;
-                        error.errorText = errorText;
-                        throw error;
-                    }
-                    let detailedMessage = errorText;
-                    try {
-                        const errorJson = JSON.parse(errorText);
-                        if (errorJson.error?.message) {
-                            detailedMessage = errorJson.error.message;
-                        }
-                    }
-                    catch (e) { }
-                    throw new Error(`Failed to upsample video (request ${i + 1}/${requestsCount}): ${response.statusText} - ${detailedMessage}`);
-                }
-                const responseData = await response.json();
-                // Veo 3.1 lite tier có thể trả `{media:[...]}` thay vì `{operations:[...]}`
-                // — fallback sang submit converter để upstream lưu providerJobId đúng.
-                if (responseData.operations && responseData.operations.length > 0) {
-                    allOperations.push(...responseData.operations);
-                }
-                else if (Array.isArray(responseData.media) &&
-                    responseData.media.length > 0) {
-                    const ourSceneId = reqItem?.metadata?.sceneId || "";
-                    allOperations.push(...this.convertMediaArrayToSubmitOperations(responseData.media, ourSceneId));
-                }
             }
-            // "✅ Video upsampling completed" log dropped — TLS Submit covers it.
-            return { operations: allOperations };
-        });
+            catch (err) {
+                const classified = classifyFlowGenError(err);
+                logger.error(`❌ [Upscale] video ${resolution} lỗi: ${classified?.message ?? classified}`, { projectId });
+                throw classified;
+            }
+            const parsed = parseVideoSubmitResponse(payload);
+            const op = parsed.operations[0] ?? { operationId: upscaledMediaId(sourceMediaId, resolution), workflowId };
+            operations.push(...this.convertMediaArrayToSubmitOperations([{ name: op.operationId, projectId, workflowId: op.workflowId ?? workflowId }], item.metadata?.sceneId ?? ""));
+        }
+        return { operations };
     }
     /**
      * ✅ API: Upsample Image to 2K/4K
@@ -1684,9 +1029,6 @@ export class Veo3Service {
     // to free-tier quality (watermarked / blurred). genNormal omits it because
     // standard (PAYGATE_TIER_ONE) accounts observe no difference.
     userPaygateTier) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for image upsampling");
-        }
         // ⚠️ Sync veo3ProjectId vào config trước khi gọi reCAPTCHA
         if (projectId) {
             this.updateConfig({ veo3ProjectId: projectId });
@@ -1704,6 +1046,7 @@ export class Veo3Service {
             // Mode code: 1 = 2K, 2 = 4K (observed in BOQ SPrCad RPC)
             const modeCode = targetResolution.includes("4K") ? 2 : 1;
             // 1. Primary: Try new BOQ RPC (SPrCad) if profileId is available
+            let boqFailure = null;
             if (this.config.profileId) {
                 // Mint NGOÀI try: cầu captcha hỏng là lỗi riêng, đừng ghi nhầm thành
                 // "BOQ RPC failed" rồi đẩy tiếp sang REST (REST cũng cần token).
@@ -1749,8 +1092,19 @@ export class Veo3Service {
                     // một token reCAPTCHA và một lượt gọi API (đã trừ credit). Ném tiếp.
                     if (boqErr?.isCorruptPayload)
                         throw boqErr;
+                    boqFailure = boqErr;
                     logger.warn(`⚠️ [API Monitor] BOQ RPC (SPrCad) failed (${boqErr?.message || String(boqErr)}), falling back to REST endpoint...`);
                 }
+            }
+            // The REST fallback still belongs to the retired Bearer lane. When no
+            // cached legacy token exists, preserve the real BOQ error instead of
+            // masking it with an impossible "access token required" recovery.
+            if (!this.config.accessToken) {
+                if (boqFailure)
+                    throw boqFailure;
+                const retired = new Error('Google đã tắt access token cũ; không thể dùng REST fallback cho upscale ảnh.');
+                retired.code = 'FLOW_AUTH_RETIRED';
+                throw retired;
             }
             // 2. Fallback: REST endpoint /flow/upsampleImage
             const restRecaptchaToken = await mintRecaptchaToken();
@@ -1836,249 +1190,43 @@ export class Veo3Service {
         });
     }
     /**
-     * Generate reference images for characters (Imagen/Banana/GemPix)
-     * POST /projects/{projectId}/flowMedia:batchGenerateImages
+     * Reference images for characters: `outputs` images of one prompt, each with its own seed,
+     * generated through the same Flow rpc as {@link generateBatchImages}.
      */
     async generateCharacterImages(options) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for image generation");
-        }
-        // ⚠️ Sync veo3ProjectId vào config trước khi gọi reCAPTCHA — nếu không, browser sẽ
-        // load homepage `labs.google/fx/tools/flow` thay vì project page → action↔location mismatch.
-        if (options.projectId) {
-            this.updateConfig({ veo3ProjectId: options.projectId });
-        }
         const outputs = Math.min(Math.max(options.outputs ?? 1, 1), 4);
-        const aspectRatio = options.imageAspectRatio || "IMAGE_ASPECT_RATIO_LANDSCAPE";
-        // SessionId format: ";{timestamp}" - API requires semicolon prefix.
-        // \ud83d\udd10 REAL BROWSER: gi\u1eef sessionId c\u1ed1 \u0111\u1ecbnh xuy\u00ean su\u1ed1t browser session
-        // per (profile, veo3Project) \u2014 m\u1ed7i project l\u00e0 1 tab ri\u00eang tr\u00ean labs.google.
-        const sessionId = options.sessionId ||
-            (this.config.profileId
-                ? sessionIdManager.get(this.config.profileId, options.projectId)
-                : `;${Date.now()}`);
         const seeds = options.seeds && options.seeds.length >= outputs
             ? options.seeds.slice(0, outputs)
-            : Array.from({ length: outputs }, () => Math.floor(Math.random() * 1000000));
-        // Build imageInputs from referenceImageMediaIds. Veo3 requires UUID format
-        // for `imageInputs[].name` — extractUUIDFromMediaId decodes CAMa proto when needed.
-        const imageInputs = (options.referenceImageMediaIds || []).map((mediaId) => ({
-            name: extractUUIDFromMediaId(mediaId),
-            imageInputType: (options.imageInputType ||
-                "IMAGE_INPUT_TYPE_REFERENCE"),
-        }));
-        const batchId = crypto.randomUUID();
-        return this.executeWithTokenRefresh(async () => {
-            // ⚠️ Lấy TẤT CẢ token cùng lúc trong 1 browser session để đảm bảo:
-            //   1. Tất cả token có cùng UA, cookies, project page, warmth state
-            //   2. Token gen cách nhau ~30ms thay vì 10-25s (queue serialized)
-            //   3. Time gap token→API call ngắn → không bị Google flag stale token
-            const batchTokenResult = await this.requestRecaptchaTokens("IMAGE_GENERATION", outputs);
-            if (batchTokenResult.length < outputs) {
-                throw new Error(`Batch tokens insufficient: got ${batchTokenResult.length}, need ${outputs}`);
-            }
-            const processSeed = async (seed, index) => {
-                const tokenForThisRequest = batchTokenResult[index];
-                // ⚠️ Field order khớp real browser: { recaptchaContext, projectId, tool, sessionId }
-                // và requests[0]: { clientContext, imageModelName, imageAspectRatio, structuredPrompt, seed, imageInputs }
-                const requestBody = {
-                    clientContext: {
-                        recaptchaContext: {
-                            token: tokenForThisRequest,
-                            applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                        },
-                        projectId: options.projectId,
-                        tool: "PINHOLE",
-                        sessionId,
-                    },
-                    mediaGenerationContext: {
-                        batchId,
-                    },
-                    useNewMedia: true,
-                    requests: [
-                        {
-                            clientContext: {
-                                recaptchaContext: {
-                                    token: tokenForThisRequest,
-                                    applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                                },
-                                projectId: options.projectId,
-                                tool: "PINHOLE",
-                                sessionId,
-                            },
-                            imageModelName: options.imageModelName,
-                            imageAspectRatio: aspectRatio,
-                            structuredPrompt: {
-                                parts: [
-                                    {
-                                        text: options.prompt,
-                                    },
-                                ],
-                            },
-                            seed,
-                            imageInputs: imageInputs.length > 0 ? imageInputs : [], // Always include as array
-                        },
-                    ],
-                };
-                const url = `${this.sandboxBaseUrl}/projects/${options.projectId}/flowMedia:batchGenerateImages`;
-                logger.info(`📸 [Character Images] Generating image ${index + 1}/${outputs} using ${options.imageModelName} (${aspectRatio})`);
-                // 🔍 DEBUG: Log exact imageInputs and sessionId being sent
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`🔍 [imageInputs] imageInputs for seed=${seed}:`, JSON.stringify(imageInputs));
-                    logger.info(`🔍 [sessionId] sessionId format: "${sessionId}"`);
-                }
-                // ⚠️ NO pre-gen telemetry POST. Real Flow does not emit a per-gen
-                // pre-log on the wire (see captures/flowai-lifecycle-*.json) — every
-                // pre-gen `:batchLog` we used to send was a per-gen burst signal that
-                // helped Google reCAPTCHA Enterprise score this profile as bot.
-                // Post-gen events go through the buffered FlowTelemetry path instead.
-                const submitStartMs = Date.now();
-                const xhrPromise = googleFetch({
-                    profileId: this.config.profileId,
-                    veo3ProjectId: this.config.veo3ProjectId,
-                    locale: this.config.locale,
-                    url,
-                    method: "POST",
-                    headers: this.getSandboxHeaders("text/plain"),
-                    body: JSON.stringify(requestBody),
-                    timeoutMs: Number(process.env.IMAGE_GEN_TIMEOUT_MS) || 240000,
-                    // Real-Chrome path: trigger clr from the same in-page JS block
-                    // immediately after xhr.send() to guarantee wire order:
-                });
-                // Release the per-profile mint lock as soon as the submit is on the
-                // wire (mint → submit on the wire). Captcha extension handles
-                // _grecaptcha strip pre/post mint, so no clr signal needed here.
-                options.onSubmitFired?.();
-                let response;
-                try {
-                    response = await xhrPromise;
-                }
-                finally {
-                }
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    logger.error(`❌ [Character Images] Seed #${index} API Error: ${response.status} - ${errorText.substring(0, 200)}`);
-                    if (response.status === 429) {
-                        // Phân biệt 2 nhóm 429 (xem thêm nhánh batch bên dưới):
-                        //  - TOO_MUCH_TRAFFIC: trần tốc độ per-account TẠM THỜI → queue manager nghỉ dài dần (2→5→10 phút) rồi retry.
-                        //  - 429 thường (gen quá nhanh): giữ nguyên delay 30s + retry.
-                        // Daily-quota-thật trả về PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED_UPGRADEABLE qua status khác.
-                        const isTransientTrafficLimit = typeof errorText === "string" &&
-                            errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY_TOO_MUCH_TRAFFIC");
-                        const error = new Error(isTransientTrafficLimit
-                            ? `Rate limit (Mã 429 TOO_MUCH_TRAFFIC): Google đang giới hạn tốc độ tài khoản, sẽ tự retry sau vài phút.`
-                            : `Rate limit (Mã 429): Gen quá nhanh, sẽ tự retry sau 30s.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        if (isTransientTrafficLimit)
-                            error.isTransientTrafficLimit = true;
-                        throw error;
-                    }
-                    if (response.status >= 500) {
-                        const error = new Error(`Lỗi Google (Mã ${response.status}): Hệ thống Google đang gặp sự cố. Vui lòng thử lại sau!`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isGoogleServerError = true; // tag để retry nhanh (5-10s) thay vì 60s
-                        throw error;
-                    }
-                    // 403 + reCAPTCHA failure = browser session score thấp, không phải auth error.
-                    if (response.status === 403 &&
-                        (errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY") ||
-                            errorText.includes("reCAPTCHA evaluation failed"))) {
-                        const error = new Error(`reCAPTCHA bị Google từ chối (Mã 403): Browser session score thấp. Profile sẽ được reset và thử lại.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isRecaptchaFailure = true;
-                        throw error;
-                    }
-                    if (this.isAuthError(response, errorText)) {
-                        const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                        error.response = response;
-                        error.errorText = errorText;
-                        throw error;
-                    }
-                    const { parseVeo3Error } = await import("./veo3ErrorHandler.js");
-                    const friendlyMessage = parseVeo3Error(errorText, `Failed to generate character image ${index}: ${response.statusText}`);
-                    const error = new Error(friendlyMessage);
-                    error.response = response;
-                    error.errorText = errorText;
-                    throw error;
-                }
-                const responseJson = await response.json();
-                const mediaItems = Array.isArray(responseJson.media)
-                    ? responseJson.media
-                    : [];
-                if (mediaItems.length === 0) {
-                    throw new Error(`No media returned for image ${index}`);
-                }
-                const media = mediaItems[0];
-                const generated = media?.image?.generatedImage || media?.generatedImage || {};
-                const mediaGenerationId = generated.mediaGenerationId || media?.name || "";
-                // Fire-and-forget: post-gen telemetry log với latency
-                this.fireImageGenLogs({
-                    sessionId,
-                    imageModelName: options.imageModelName,
-                    aspectRatio,
-                    refImageCount: imageInputs.length,
-                    outputsPerPrompt: 1,
-                    phase: "after",
-                    latencyMs: Date.now() - submitStartMs,
-                });
-                return {
-                    name: media?.name,
-                    seed: generated.seed,
-                    prompt: generated.prompt,
-                    aspectRatio: generated.aspectRatio,
-                    modelNameType: generated.modelNameType || options.imageModelName,
-                    encodedImage: generated.encodedImage,
-                    fifeUrl: generated.fifeUrl,
-                    mediaGenerationId,
-                    veoMediaId: mediaGenerationId,
-                };
-            };
-            const timeoutId = setTimeout(() => {
-                throw new Error("Image generation timed out sau 180 giây.");
-            }, options.timeoutMs ?? 180000);
-            try {
-                logger.info(`🚀 [Character Images] Submitting ${outputs} sequential requests with batchId=${batchId}...`);
-                // Sequential execution: chạy tuần tự thay vì parallel để tránh concurrent XHR
-                // qua cùng 1 browser window. Image gen đồng bộ (30-60s/request) → nhiều XHR
-                // chạy cùng lúc → Google phát hiện burst activity → reCAPTCHA score thấp → 403.
-                // Video gen dùng sequential for+await và không bị vì mỗi request async chỉ ~1s.
-                const results = [];
-                for (let i = 0; i < seeds.length; i++) {
-                    const result = await processSeed(seeds[i], i);
-                    results.push(result);
-                }
-                logger.info(`✅ [Character Images] successfully grabbed all ${results.length} images.`);
-                return results;
-            }
-            catch (error) {
-                if (error?.name === "AbortError" ||
-                    error?.message?.includes("timed out")) {
-                    throw new Error("Image generation timed out sau 180 giây.");
-                }
-                throw error;
-            }
-            finally {
-                clearTimeout(timeoutId);
-            }
+            : Array.from({ length: outputs }, () => Math.floor(Math.random() * 1000000000));
+        return this.generateBatchImages({
+            projectId: options.projectId,
+            imageModelName: options.imageModelName,
+            imageAspectRatio: options.imageAspectRatio,
+            timeoutMs: options.timeoutMs,
+            onSubmitFired: options.onSubmitFired,
+            prompts: seeds.map((seed) => ({
+                prompt: options.prompt,
+                seed,
+                referenceImageMediaIds: options.referenceImageMediaIds,
+                imageInputType: options.imageInputType,
+            })),
         });
     }
     /**
-     * Generate multiple images with DIFFERENT prompts in a single batch request
-     * POST /projects/{projectId}/flowMedia:batchGenerateImages
-     * Max 4 prompts per batch for optimal performance
+     * Generate images with DIFFERENT prompts in parallel (max 20).
      *
-     * This is more efficient than calling generateCharacterImages multiple times
-     * because it uses a single reCAPTCHA token for multiple images
+     * Runs on Flow's `ogiZ0b` batchexecute RPC — cookie-authenticated, synchronous, and
+     * answers with the finished image URL. The old aisandbox-pa `batchGenerateImages`
+     * needed a ya29 Bearer that can no longer be issued (labs auth/session answers 410).
+     * One reCAPTCHA token per prompt; the token is single-use, so a request that fails
+     * after it was spent is surfaced as retryable instead of being re-sent inline.
      */
     async generateBatchImages(options) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for batch image generation");
-        }
+        const profileId = this.config.profileId;
+        if (!profileId)
+            throw new Error("Thiếu profileId — không thể gen ảnh trên Flow");
         // ⚠️ Sync veo3ProjectId vào config trước khi gọi reCAPTCHA — bắt buộc để Google
-        // bind được action ↔ project page (xem comment ở generateCharacterImages).
+        // bind được action ↔ project page.
         if (options.projectId) {
             this.updateConfig({ veo3ProjectId: options.projectId });
         }
@@ -2086,419 +1234,102 @@ export class Veo3Service {
         if (options.prompts.length > maxBatchSize) {
             throw new Error(`Batch size exceeds maximum of ${maxBatchSize} prompts. Got ${options.prompts.length}`);
         }
-        if (options.prompts.length === 0) {
+        if (options.prompts.length === 0)
             return [];
+        // Only the plain "reference" input type was captured (flag 1); editing a base image
+        // (IMAGE_INPUT_TYPE_BASE_IMAGE) has no known code yet.
+        if (options.prompts.some((p) => (p.referenceImageMediaIds?.length ?? 0) > 0 &&
+            p.imageInputType === "IMAGE_INPUT_TYPE_BASE_IMAGE")) {
+            throw new UnsupportedFlowImageOptionError("Sửa ảnh gốc (BASE_IMAGE) chưa hỗ trợ trên Flow mới — mới bắt được ảnh tham chiếu thường.");
         }
         const aspectRatio = options.imageAspectRatio || "IMAGE_ASPECT_RATIO_LANDSCAPE";
-        const rawSessionId = options.sessionId ||
-            (this.config.profileId
-                ? sessionIdManager.get(this.config.profileId, options.projectId)
-                : `;${Date.now()}`);
-        const sessionId = rawSessionId.startsWith(";")
-            ? rawSessionId
-            : `;${rawSessionId}`;
-        // Mỗi sản phẩm là một request batch riêng; các ảnh đầu ra của chính sản
-        // phẩm đó dùng chung batchId này, đúng cơ chế Veo3 Gen.
-        const batchId = crypto.randomUUID();
-        return this.executeWithTokenRefresh(async () => {
-            // ⚠️ Lấy N token cùng lúc để mọi request trong batch có cùng UA, cookies, project page,
-            // warmth state. Tránh queue serialize + giảm time gap token→API.
-            const promptCount = options.prompts.length;
-            const batchTokenResult = await this.requestRecaptchaTokens("IMAGE_GENERATION", promptCount);
-            if (batchTokenResult.length < promptCount) {
-                throw new Error(`Batch tokens insufficient: got ${batchTokenResult.length}, need ${promptCount}`);
-            }
-            // 🔔 Callback ngay khi đã có toàn bộ token (UI cập nhật progress)
-            if (options.onRecaptchaComplete) {
-                try {
-                    await options.onRecaptchaComplete();
-                }
-                catch (_) {
-                    /* non-blocking */
-                }
-            }
-            // Create a function to process a single prompt to run them in parallel
-            const processPrompt = async (promptConfig, index) => {
-                const tokenForThisRequest = batchTokenResult[index];
-                const seed = promptConfig.seed ?? Math.floor(Math.random() * 1000000);
-                // Build imageInputs if referenceImageMediaIds provided. Veo3 expects UUID
-                // format for `imageInputs[].name` — convert CAMa→UUID when needed.
-                const imageInputs = (promptConfig.referenceImageMediaIds || []).map((mediaId) => ({
-                    name: extractUUIDFromMediaId(mediaId),
-                    imageInputType: (promptConfig.imageInputType ||
-                        "IMAGE_INPUT_TYPE_REFERENCE"),
-                }));
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`📋 [Batch Images] Request #${index}: seed=${seed}, refImages=${promptConfig.referenceImageMediaIds?.length || 0}`);
-                }
-                if (imageInputs.length > 0 && runtimeVerboseLogsEnabled()) {
-                    logger.info(`🔍 [Batch Images] imageInputs for seed=${seed}:`, JSON.stringify(imageInputs));
-                    logger.info(`🔍 [Batch Images] promptConfig.imageInputType:`, promptConfig.imageInputType || "(default)");
-                }
-                // ⚠️ Field order: { recaptchaContext, projectId, tool, sessionId } — khớp real browser
-                // (verified qua capture tool). Tool cũ gửi { recaptchaContext, sessionId, projectId, tool }
-                // → server bình thường không care, nhưng safer match thứ tự thật để tránh edge case.
-                // requests[0] order: { clientContext, imageModelName, imageAspectRatio, structuredPrompt, seed, imageInputs }.
-                const requestBody = {
-                    clientContext: {
-                        recaptchaContext: {
-                            token: tokenForThisRequest,
-                            applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                        },
-                        projectId: options.projectId,
-                        tool: "PINHOLE",
-                        sessionId,
-                    },
-                    mediaGenerationContext: {
-                        batchId: batchId,
-                    },
-                    useNewMedia: true,
-                    requests: [
-                        {
-                            clientContext: {
-                                recaptchaContext: {
-                                    token: tokenForThisRequest,
-                                    applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                                },
-                                projectId: options.projectId,
-                                tool: "PINHOLE",
-                                sessionId,
-                            },
-                            imageModelName: options.imageModelName,
-                            imageAspectRatio: aspectRatio,
-                            structuredPrompt: {
-                                parts: [
-                                    {
-                                        text: promptConfig.prompt,
-                                    },
-                                ],
-                            },
-                            seed,
-                            imageInputs: imageInputs.length > 0 ? imageInputs : [], // Always include as array
-                        },
-                    ],
-                };
-                const url = `${this.sandboxBaseUrl}/projects/${options.projectId}/flowMedia:batchGenerateImages`;
-                // Full request-body dump (prompt HEAD/MID/TAIL, imageInputs, headers)
-                // gated behind VEO3_BATCH_VERBOSE=1 — useful for diagnosing 500
-                // INTERNAL from Veo3 imagen but ~6 lines per submit otherwise.
-                if (runtimeVerboseLogsEnabled() ||
-                    process.env.VEO3_BATCH_VERBOSE === "1") {
-                    const promptText = requestBody.requests?.[0]?.structuredPrompt?.parts?.[0]?.text ?? "";
-                    logger.info(`[Batch Images] body meta seed=${seed} model=${options.imageModelName} aspect=${aspectRatio} promptLen=${promptText.length} project=${options.projectId} batchId=${batchId}`);
-                }
-                // \u23f1\ufe0f Image gen API timeout \u2014 default 120s, override via env
-                // IMAGE_GEN_TIMEOUT_MS. GEM_PIX_2 normal ~10-15s, BELUGA multi-ref
-                // ~30-60s. Bumped 120s \u2192 240s sau khi th\u1ea5y Google response peak load
-                // c\u00f3 th\u1ec3 >120s (timeout 125s = 120 + 5s host overhead \u2192 fail oan request
-                // h\u1ee3p l\u1ec7 ch\u1eadm). 240s ceiling absorbs slow lane while still capping
-                // true browser hang.
-                // \u26a0\ufe0f KH\u00d4NG retry inline khi network error \u2014 reCAPTCHA token l\u00e0 SINGLE-USE.
-                const IMAGE_GEN_TIMEOUT_MS = Number(process.env.IMAGE_GEN_TIMEOUT_MS) || 240000;
-                const abortController = new AbortController();
-                const timeoutId = setTimeout(() => abortController.abort(), IMAGE_GEN_TIMEOUT_MS);
-                // ⚠️ NO pre-gen telemetry POST — see processSeed in generateCharacterImages
-                // for the rationale. Per-gen pre-log was a bot fingerprint absent in real
-                // Flow; post-gen events use the buffered FlowTelemetry path now.
-                const submitStartMs = Date.now();
-                let response;
-                try {
-                    // Submit via Node TLS (chrome_131_PSK JA3) so the captcha token's
-                    // fingerprint matches the request. Pass timeoutMs explicitly because
-                    // Google image gen response can run up to ~2 minutes.
-                    const xhrPromise = googleFetch({
-                        profileId: this.config.profileId,
-                        veo3ProjectId: this.config.veo3ProjectId,
-                        locale: this.config.locale,
-                        url,
-                        method: "POST",
-                        headers: this.getSandboxHeaders("text/plain"),
-                        body: JSON.stringify(requestBody),
-                        timeoutMs: IMAGE_GEN_TIMEOUT_MS,
-                    });
-                    // Fire onSubmitFired at SUBMIT-START (first POST on the wire) so the
-                    // inter-batch delay is measured from submit, not batch completion —
-                    // this is what enables delay-from-submit pipelining. Only index 0 fires
-                    // it, so handleSubmitFired counts ONE submit per burst (matches the
-                    // video path's `if (i === 0) onSubmitFired?.()`).
-                    if (index === 0)
-                        options.onSubmitFired?.();
-                    response = await xhrPromise;
-                }
-                catch (err) {
-                    clearTimeout(timeoutId);
-                    if (err?.name === "AbortError") {
-                        logger.error(`⏱️ [Batch Images] Set #${index} TIMEOUT after ${IMAGE_GEN_TIMEOUT_MS}ms — will retry với token mới`);
-                        const error = new Error(`Image gen timeout: Google không phản hồi trong ${IMAGE_GEN_TIMEOUT_MS / 1000}s. Tự động retry với token mới.`);
-                        error.isTimeout = true;
-                        error.isRetryable = true;
-                        throw error;
-                    }
-                    // Network error — bubble lên để job retry lấy fresh token
-                    const errCode = err?.cause?.code || err?.code || err?.message || "unknown";
-                    logger.error(`🌐 [Batch Images] Set #${index} network err (${errCode}) — will retry với token mới`);
-                    const netError = new Error(`Image gen network error (${errCode}). Token có thể đã bị consume — retry với token mới.`);
-                    netError.isRetryable = true;
-                    netError.cause = err;
-                    throw netError;
-                }
-                clearTimeout(timeoutId);
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    logger.error(`❌ [Batch Images] Set #${index} API Error: ${response.status} - ${errorText.substring(0, 500)}`);
-                    // Diagnostic context dump on ANY error response. Split into multiple
-                    // logger.error calls so pino's per-message truncation doesn't drop
-                    // the imageInputs and prompt previews (single dump was hitting the
-                    // ~900-char limit and we lost everything past imageAspectRatio).
-                    const promptText = requestBody.requests?.[0]?.structuredPrompt?.parts?.[0]?.text ?? "";
-                    logger.error(`🔍 [Batch Images] Error meta (status=${response.status}, seed=${seed}, model=${options.imageModelName}, aspect=${aspectRatio}, project=${options.projectId}, sessionId=${sessionId}, batchId=${batchId}, recaptchaTokenLen=${tokenForThisRequest?.length ?? 0})`);
-                    logger.error(`🔍 [Batch Images] Error imageInputs (count=${imageInputs.length}): ${JSON.stringify(imageInputs.map((i) => ({ name: i.name, type: i.imageInputType })))}`);
-                    logger.error(`🔍 [Batch Images] Error prompt (len=${promptText.length}) HEAD: ${promptText.slice(0, 400)}`);
-                    logger.error(`🔍 [Batch Images] Error prompt TAIL: ${promptText.slice(-300)}`);
-                    if (response.status === 400) {
-                        // 400 = prompt vi phạm content policy hoặc invalid argument → không retry
-                        const error = new Error(`Prompt bị từ chối (Mã 400): Nội dung không hợp lệ hoặc vi phạm chính sách. Vui lòng sửa prompt.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isNonRetryable = true;
-                        throw error;
-                    }
-                    if (response.status === 429) {
-                        // Phân biệt 2 nhóm 429:
-                        //  - TOO_MUCH_TRAFFIC: trần tốc độ per-account TẠM THỜI → queue manager nghỉ dài dần (2→5→10 phút) rồi retry.
-                        //  - 429 thường (gen quá nhanh): giữ nguyên delay 30s + retry.
-                        const isTransientTrafficLimit = typeof errorText === "string" &&
-                            errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY_TOO_MUCH_TRAFFIC");
-                        const error = new Error(isTransientTrafficLimit
-                            ? `Rate limit (Mã 429 TOO_MUCH_TRAFFIC): Google đang giới hạn tốc độ tài khoản, sẽ tự retry sau vài phút.`
-                            : `Rate limit (Mã 429): Gen quá nhanh, sẽ tự retry sau 30s.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        if (isTransientTrafficLimit)
-                            error.isTransientTrafficLimit = true;
-                        throw error;
-                    }
-                    if (response.status >= 500) {
-                        const error = new Error(`Lỗi Google (Mã ${response.status}): Hệ thống Google đang gặp sự cố. Vui lòng thử lại sau!`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isGoogleServerError = true; // tag để retry nhanh (5-10s) thay vì 60s
-                        throw error;
-                    }
-                    // 403 + reCAPTCHA failure = browser session score quá thấp.
-                    // Token refresh KHÔNG giúp — cần force recreate browser để reset score.
-                    if (response.status === 403 &&
-                        (errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY") ||
-                            errorText.includes("reCAPTCHA evaluation failed"))) {
-                        const error = new Error(`reCAPTCHA bị Google từ chối (Mã 403): Browser session score thấp. Profile sẽ được reset và thử lại.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isRecaptchaFailure = true;
-                        throw error;
-                    }
-                    if (this.isAuthError(response, errorText)) {
-                        const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                        error.response = response;
-                        error.errorText = errorText;
-                        throw error;
-                    }
-                    throw buildVeoApiError(`Failed to generate batch image ${index}`, response, errorText);
-                }
-                const responseJson = await response.json();
-                const mediaItems = Array.isArray(responseJson.media)
-                    ? responseJson.media
-                    : [];
-                if (mediaItems.length === 0) {
-                    throw new Error(`No media returned for batch image ${index}`);
-                }
-                const media = mediaItems[0];
-                const generated = media?.image?.generatedImage || media?.generatedImage || {};
-                const mediaGenerationId = generated.mediaGenerationId || media?.name || "";
-                // Fire-and-forget: post-gen telemetry log với latency
-                this.fireImageGenLogs({
-                    sessionId,
-                    imageModelName: options.imageModelName,
-                    aspectRatio,
-                    refImageCount: imageInputs.length,
-                    outputsPerPrompt: 1,
-                    phase: "after",
-                    latencyMs: Date.now() - submitStartMs,
-                });
-                return {
-                    promptIndex: index,
-                    name: media?.name,
-                    seed: generated.seed,
-                    prompt: generated.prompt,
-                    aspectRatio: generated.aspectRatio,
-                    modelNameType: generated.modelNameType || options.imageModelName,
-                    encodedImage: generated.encodedImage,
-                    fifeUrl: generated.fifeUrl,
-                    mediaGenerationId,
-                    veoMediaId: mediaGenerationId,
-                };
-            };
+        const aspect = resolveAspectCode(aspectRatio);
+        if (!aspect.verified) {
+            logger.warn(`[Batch Images] mã tỉ lệ ${aspectRatio} (=${aspect.code}) chưa được kiểm chứng với Flow`);
+        }
+        const promptCount = options.prompts.length;
+        const tokens = await this.requestRecaptchaTokens("IMAGE_GENERATION", promptCount);
+        if (tokens.length < promptCount) {
+            throw new Error(`Batch tokens insufficient: got ${tokens.length}, need ${promptCount}`);
+        }
+        if (options.onRecaptchaComplete) {
             try {
-                logger.info(`🚀 [Batch Images] Submitting ${options.prompts.length} near-parallel requests with batchId=${batchId}...`);
-                // Near-parallel execution — khớp capture THẬT của Veo3: N POST bắn gần như
-                // cạnh nhau, CHUNG 1 batchId, mỗi POST 1 token riêng (đã mint sẵn theo lô ở
-                // trên). Comment "tuần tự chống burst-403" CŨ đã bị bác bỏ bằng capture:
-                // batchId chung mới là tín hiệu an toàn của Google, không phải timing tuần tự.
-                // Fallback nếu 403 tăng: thêm `await new Promise(r => setTimeout(r, 30 * i))`
-                // ở đầu processPrompt (~30ms stagger, khớp khoảng cách token native).
-                // onSubmitFired is fired at submit-START inside processPrompt (index 0),
-                // NOT here — so the inter-batch delay counts from submit, enabling the
-                // bounded pipeline (batch N+1 may submit delaySeconds after batch N started).
-                const settled = await Promise.allSettled(options.prompts.map((prompt, i) => processPrompt(prompt, i)));
-                const results = [];
-                let firstError = null;
-                for (const outcome of settled) {
-                    if (outcome.status === "fulfilled") {
-                        results.push(outcome.value);
-                    }
-                    else if (!firstError) {
-                        firstError = outcome.reason;
-                    }
-                }
-                if (firstError) {
-                    // Toàn burst dùng chung score/session nên 403 thường all-or-nothing;
-                    // partial failure (vài ảnh xong + vài ảnh lỗi) hiếm. Giữ hành vi cũ:
-                    // ném lỗi đầu tiên → caller requeue cả đợt. (Partial-success reclaim là
-                    // follow-up B5, cố tình để ngoài path 403 nhạy cảm.)
-                    throw firstError;
-                }
-                logger.info(`✅ [Batch Images] successfully mapped all ${results.length} images.`);
-                return results;
+                await options.onRecaptchaComplete();
             }
-            catch (error) {
-                throw error;
+            catch (_) {
+                /* non-blocking */
             }
-        });
+        }
+        const timeoutMs = options.timeoutMs ?? (Number(process.env.IMAGE_GEN_TIMEOUT_MS) || 240000);
+        const sourcePath = `/project/${options.projectId}`;
+        const generateOne = async (promptConfig, index) => {
+            const seed = promptConfig.seed ?? Math.floor(Math.random() * 1000000000);
+            const startedAt = Date.now();
+            // Args are rebuilt per attempt: callFlowRpc re-runs them if it re-bootstraps the
+            // session, and a reCAPTCHA token must never be sent twice.
+            let firstAttempt = true;
+            const buildArgs = async () => {
+                const recaptchaToken = firstAttempt
+                    ? tokens[index]
+                    : (await this.requestRecaptchaTokens("IMAGE_GENERATION", 1))[0];
+                firstAttempt = false;
+                return buildGenerateImageArgs({
+                    projectId: options.projectId,
+                    prompt: promptConfig.prompt,
+                    seed,
+                    aspectCode: aspect.code,
+                    imageModelName: options.imageModelName,
+                    recaptchaToken,
+                    referenceMediaIds: promptConfig.referenceImageMediaIds?.map(extractUUIDFromMediaId),
+                });
+            };
+            // Fired at SUBMIT-START so the inter-batch delay counts from submit.
+            if (index === 0)
+                options.onSubmitFired?.();
+            let payload;
+            try {
+                payload = await callFlowRpc(profileId, FLOW_RPC.generateImage, buildArgs, {
+                    userAgent: this.config.userAgent,
+                    sourcePath,
+                    timeoutMs,
+                });
+            }
+            catch (err) {
+                const classified = classifyImageGenError(err);
+                logger.error(`❌ [Batch Images] Set #${index} ogiZ0b lỗi: ${classified?.message ?? classified}`, { project: options.projectId, model: options.imageModelName, aspect: aspectRatio, seed });
+                throw classified;
+            }
+            const result = parseGenerateImageResponse(payload, {
+                promptIndex: index,
+                imageModelName: options.imageModelName,
+                aspectRatio,
+            });
+            return result;
+        };
+        logger.info(`🚀 [Batch Images] Gen ${promptCount} ảnh qua Flow ogiZ0b...`);
+        const settled = await Promise.allSettled(options.prompts.map(generateOne));
+        const results = [];
+        let firstError = null;
+        for (const outcome of settled) {
+            if (outcome.status === "fulfilled")
+                results.push(outcome.value);
+            else if (!firstError)
+                firstError = outcome.reason;
+        }
+        // Same contract as before: all-or-nothing — the caller requeues the whole burst.
+        if (firstError)
+            throw firstError;
+        logger.info(`✅ [Batch Images] ${results.length} ảnh đã xong.`);
+        return results;
     }
     /**
-     * ✅ API: Generate video from start and end images (frame-to-frame)
-     * POST /v1/video:batchAsyncGenerateVideoStartAndEndImage
+     * Submit video generation (frame-to-frame) through Flow's `generateVideoStartAndEndImage` batchexecute rpc
+     * (cookie-authenticated; aisandbox-pa and its Bearer are gone).
      *
-     * Đây là API để tạo video từ ảnh bắt đầu và ảnh kết thúc (frame-to-frame).
-     * Sử dụng khi có cả startImageMediaId và endImageMediaId.
-     *
-     * API spec: Content-Type: text/plain;charset=UTF-8
-     *
-     * @returns operation name (dùng để poll status)
+     * @returns operations to poll — same shape the queue already consumes
      */
-    async batchAsyncGenerateVideoStartAndEndImage(request, // Uses same type frame-to-frame
-    onRecaptchaComplete, onSubmitFired) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for video generation");
-        }
-        // ⚠️ Sync veo3ProjectId vào config trước khi gọi reCAPTCHA
-        if (request.clientContext?.projectId) {
-            this.updateConfig({ veo3ProjectId: request.clientContext.projectId });
-        }
-        return this.executeWithTokenRefresh(async () => {
-            const url = `${this.sandboxBaseUrl}/video:batchAsyncGenerateVideoStartAndEndImage`;
-            logger.info(`📤 [API Monitor] Submit video (Start+End Image) count=${request.requests?.length || 0} project=${request.clientContext?.projectId?.substring(0, 12) || "N/A"}`);
-            const batchId = crypto.randomUUID();
-            const allOperations = [];
-            const requestsCount = request.requests?.length || 0;
-            const batchTokenResult = await this.requestRecaptchaTokens("VIDEO_GENERATION", requestsCount);
-            if (batchTokenResult.length < requestsCount) {
-                throw new Error(`Batch tokens insufficient for video-startend: got ${batchTokenResult.length}, need ${requestsCount}`);
-            }
-            if (onRecaptchaComplete) {
-                try {
-                    await onRecaptchaComplete();
-                }
-                catch (_) {
-                    /* non-blocking */
-                }
-            }
-            for (let i = 0; i < requestsCount; i++) {
-                const reqItem = request.requests[i];
-                const tokenForThisRequest = batchTokenResult[i];
-                const singleRequestBody = {
-                    clientContext: {
-                        ...request.clientContext,
-                        recaptchaContext: {
-                            token: tokenForThisRequest,
-                            applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB",
-                        },
-                    },
-                    mediaGenerationContext: {
-                        batchId: batchId,
-                        audioFailurePreference: request.mediaGenerationContext?.audioFailurePreference ??
-                            "BLOCK_SILENCED_VIDEOS",
-                    },
-                    ...(request.useV2ModelConfig ? { useV2ModelConfig: true } : {}),
-                    requests: [
-                        {
-                            ...reqItem,
-                        },
-                    ],
-                };
-                const xhrPromise5 = googleFetch({
-                    profileId: this.config.profileId,
-                    veo3ProjectId: this.config.veo3ProjectId,
-                    locale: this.config.locale,
-                    url,
-                    method: "POST",
-                    headers: this.getSandboxHeaders("text/plain;charset=UTF-8"),
-                    body: JSON.stringify(singleRequestBody),
-                    // Keep submit -> clr in the same page execution block to avoid
-                    // out-of-band reset races on the wire.
-                });
-                // 🔓 Browser captcha lifecycle complete (1st request): XHR fired + clr sent.
-                if (i === 0)
-                    onSubmitFired?.();
-                let response;
-                try {
-                    response = await xhrPromise5;
-                }
-                finally {
-                }
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`📥 [API Monitor] Request ${i + 1}/${requestsCount} response status: ${response.status} ${response.statusText}`);
-                }
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    const isRecaptcha403 = response.status === 403 &&
-                        (errorText.includes("PUBLIC_ERROR_UNUSUAL_ACTIVITY") ||
-                            errorText.includes("reCAPTCHA evaluation failed"));
-                    if (isRecaptcha403) {
-                        logger.warn(`⚠️ [API Monitor] Request ${i + 1}/${requestsCount} → 403 reCAPTCHA (silent retry)`);
-                    }
-                    else {
-                        logger.error(`❌ [API Monitor] Request ${i + 1}/${requestsCount} API Error: ${response.status} - ${errorText.substring(0, 500)}`);
-                    }
-                    if (isRecaptcha403) {
-                        const error = new Error(`reCAPTCHA bị Google từ chối (Mã 403): Browser session score thấp. Profile sẽ được reset và thử lại.`);
-                        error.response = response;
-                        error.errorText = errorText;
-                        error.isRecaptchaFailure = true;
-                        throw error;
-                    }
-                    if (this.isAuthError(response, errorText)) {
-                        const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                        error.response = response;
-                        error.errorText = errorText;
-                        throw error;
-                    }
-                    throw buildVeoApiError(`Failed to generate video with start and end images (request ${i + 1}/${requestsCount})`, response, errorText);
-                }
-                const responseData = await response.json();
-                // Veo 3.1 lite tier có thể trả `{media:[...]}` thay vì `{operations:[...]}`
-                // — fallback sang submit converter để upstream lưu providerJobId đúng.
-                if (responseData.operations && responseData.operations.length > 0) {
-                    allOperations.push(...responseData.operations);
-                }
-                else if (Array.isArray(responseData.media) &&
-                    responseData.media.length > 0) {
-                    const ourSceneId = reqItem?.metadata?.sceneId || "";
-                    allOperations.push(...this.convertMediaArrayToSubmitOperations(responseData.media, ourSceneId));
-                }
-            }
-            // "✅ Video generation start+end image completed" log dropped — TLS Submit covers it.
-            return { operations: allOperations };
-        });
+    async batchAsyncGenerateVideoStartAndEndImage(request, onRecaptchaComplete, onSubmitFired) {
+        return this.submitVideoViaFlow("f2f", request, onRecaptchaComplete, onSubmitFired);
     }
     /**
      * Convert Veo 3.1 SUBMIT response shape `{media:[{name, projectId, workflowId,...}]}`
@@ -2587,286 +1418,90 @@ export class Veo3Service {
         });
     }
     /**
-     * ✅ API CHÍNH: Check status + lấy video URL
-     * POST /v1/video:batchCheckAsyncVideoGenerationStatus
-     *
-     * Đây là API chính để check status và lấy video URL khi hoàn thành.
-     *
-     * @returns status và videoUrl (nếu đã hoàn thành)
+     * Check the state of generation operations (video, upscale) through Flow's `jwpduf`
+     * poll rpc; a finished media's URL is read with `getMedia`.
      */
-    async batchCheckAsyncVideoGenerationStatus(request, retryCount = 0, maxRetries = 3) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for status check");
-        }
-        return this.executeWithTokenRefresh(async () => {
-            const url = `${this.sandboxBaseUrl}/video:batchCheckAsyncVideoGenerationStatus`;
-            if (runtimeVerboseLogsEnabled()) {
-                logger.info(`📤 [Poll Status] Requesting status check`, {
-                    url,
-                    operationsCount: request.operations?.length || 0,
-                    operationNames: request.operations
-                        ?.map((op) => op.operation?.name?.substring(0, 20))
-                        .join(", ") || "N/A",
-                    sceneIds: request.operations?.map((op) => op.sceneId).join(", ") ||
-                        "N/A",
-                });
-            }
-            const requestBody = JSON.stringify(request);
-            // Log actual request body for debugging (to compare with curl example)
-            if (runtimeVerboseLogsEnabled()) {
-                logger.info(`📤 [Poll Status] Request body:`, requestBody);
-            }
-            try {
-                const response = await googleFetch({
-                    profileId: this.config.profileId,
-                    veo3ProjectId: this.config.veo3ProjectId,
-                    locale: this.config.locale,
-                    url,
-                    method: "POST",
-                    headers: this.getSandboxHeaders(),
-                    body: requestBody,
-                });
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`📥 [Poll Status] Response status: ${response.status} ${response.statusText}`);
-                }
-                // Check for 500 error and retry
-                if (response.status === 500) {
-                    if (retryCount < maxRetries) {
-                        const waitTime = (retryCount + 1) * 1000; // Exponential backoff: 1s, 2s, 3s
-                        logger.warn(`⚠️  [Poll Status] Server error 500, retrying ${retryCount + 1}/${maxRetries} after ${waitTime}ms...`);
-                        await new Promise((resolve) => setTimeout(resolve, waitTime));
-                        return this.batchCheckAsyncVideoGenerationStatus(request, retryCount + 1, maxRetries);
-                    }
-                    else {
-                        const errorText = await response.text();
-                        logger.error(`❌ [Poll Status] Server error 500 after ${maxRetries} retries`);
-                        logger.error(`   Error details: ${errorText.substring(0, 200)}...`);
-                        throw new Error(`Server error 500 after ${maxRetries} retries: ${errorText}`);
-                    }
-                }
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    logger.error(`❌ [Poll Status] API Error: ${response.status} - ${errorText}`);
-                    if (this.isAuthError(response, errorText)) {
-                        const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                        error.response = response;
-                        error.errorText = errorText;
-                        throw error;
-                    }
-                    throw new Error(`Failed to check video status: ${response.statusText} - ${errorText}`);
-                }
-                const responseData = await response.json();
-                // Backward-compatible response normalization.
-                // Một số account/tier (Veo 3.1 r2v lite/ultra) trả `{media:[...]}` thay vì
-                // `{operations:[...]}` cho cùng request body. Ưu tiên operations[] (shape cũ);
-                // fallback sang media[] đã convert nếu operations[] thiếu/rỗng.
-                const hasLegacyOps = Array.isArray(responseData?.operations) &&
-                    responseData.operations.length > 0;
-                const hasNewMedia = Array.isArray(responseData?.media) && responseData.media.length > 0;
-                if (!hasLegacyOps && hasNewMedia) {
-                    const nameToSceneId = new Map();
-                    for (const op of request.operations || []) {
-                        const name = op?.operation?.name;
-                        const sceneId = op?.sceneId;
-                        if (name && sceneId)
-                            nameToSceneId.set(name, sceneId);
-                    }
-                    responseData.operations = this.convertMediaArrayToPollOperations(responseData.media, nameToSceneId);
-                    if (runtimeVerboseLogsEnabled()) {
-                        logger.info(`📋 [Poll Status] Detected NEW shape {media}, converted ${responseData.operations.length} entries → legacy {operations}`);
-                    }
-                }
-                else if (hasLegacyOps && hasNewMedia) {
-                    // Edge case: cả hai shape đồng thời. Ưu tiên operations[] theo policy.
-                    logger.warn(`[Poll Status] Response chứa CẢ operations[] và media[] — dùng operations[] theo policy`);
-                }
-                if (runtimeVerboseLogsEnabled()) {
-                    logger.info(`📋 [Poll Status] Response data:`, {
-                        operationsCount: responseData.operations?.length || 0,
-                        operations: responseData.operations?.map((op) => ({
-                            operationName: op.operation?.name?.substring(0, 20),
-                            status: op.status,
-                            sceneId: op.sceneId,
-                        })) || [],
-                    });
-                }
-                return responseData;
-            }
-            catch (error) {
-                // If it's a 500 error from fetch, retry
-                if (error.message &&
-                    error.message.includes("500") &&
-                    retryCount < maxRetries) {
-                    const waitTime = (retryCount + 1) * 1000;
-                    logger.warn(`⚠️  [Poll Status] Network error, retrying ${retryCount + 1}/${maxRetries} after ${waitTime}ms...`);
-                    await new Promise((resolve) => setTimeout(resolve, waitTime));
-                    return this.batchCheckAsyncVideoGenerationStatus(request, retryCount + 1, maxRetries);
-                }
-                throw error;
-            }
-        });
+    async batchCheckAsyncVideoGenerationStatus(request) {
+        const items = request.operations.map((op) => ({
+            name: op.operation.name,
+            sceneId: String(op.sceneId || ""),
+        }));
+        return this.pollFlowOperations(items);
     }
-    async getMediaUrlRedirect(mediaId, projectId, mediaUrlType) {
-        if (!mediaId)
-            return null;
-        // Explicit type → single call. No type → probe (cached winner first), and
-        // only accept a Location that points at the playable /video/ path so a
-        // thumbnail (/image/) redirect can never win the probe.
-        const cached = Veo3Service.cachedVideoUrlType;
-        const types = mediaUrlType
-            ? [mediaUrlType]
-            : cached
-                ? [
-                    cached,
-                    ...Veo3Service.VIDEO_URL_TYPE_CANDIDATES.filter((t) => t !== cached),
-                ]
-                : [...Veo3Service.VIDEO_URL_TYPE_CANDIDATES];
-        for (const type of types) {
-            const location = await this.fetchMediaUrlRedirect(mediaId, projectId, type);
-            if (!location)
-                continue;
-            const trusted = !!mediaUrlType || type === cached;
-            if (trusted || /\/video\//.test(location)) {
-                if (!mediaUrlType && Veo3Service.cachedVideoUrlType !== type) {
-                    Veo3Service.cachedVideoUrlType = type;
-                    // An empty type is the winner on the current API, so only announce a
-                    // real one — otherwise this prints `mediaUrlType=` on every batch.
-                    if (type)
-                        logger.info(`[getMediaUrlRedirect] discovered video mediaUrlType=${type}`);
-                }
-                return location;
-            }
-        }
-        return null;
-    }
-    /** One `getMediaUrlRedirect` GET; returns the 3xx `Location` header or null. */
-    async fetchMediaUrlRedirect(mediaId, projectId, mediaUrlType, retryCount = 0) {
-        const url = `${this.baseUrl}/media.getMediaUrlRedirect?name=${encodeURIComponent(mediaId)}` +
-            (mediaUrlType ? `&mediaUrlType=${encodeURIComponent(mediaUrlType)}` : "");
-        // Match the browser's <img>/media load EXACTLY: cookie auth (added by
-        // googleFetch for labs.google) + a project referer, and crucially NO
-        // `content-type: application/json` and NO `Authorization: Bearer`. Sending
-        // getTrpcHeaders() (which adds both) makes this raw-query GET 400.
-        const locale = this.config.locale || "vi";
-        const effectiveProjectId = projectId || this.config.veo3ProjectId;
-        const referer = effectiveProjectId
-            ? `https://labs.google/fx/${locale}/tools/flow/project/${effectiveProjectId}`
-            : `https://labs.google/fx/${locale}/tools/flow`;
-        try {
-            const response = await googleFetch({
-                profileId: this.config.profileId,
-                veo3ProjectId: effectiveProjectId,
-                locale: this.config.locale,
-                url,
-                method: "GET",
-                // Mirror the browser's <video> load: no mediaUrlType (→ primary = video),
-                // Range + sec-fetch-dest:video. The 302 Location is the signed /video/ URL.
-                headers: {
-                    accept: "*/*",
-                    referer,
-                    range: "bytes=0-",
-                    "sec-fetch-dest": "video",
-                },
-                followRedirects: false,
-            });
-            // Case-insensitive Location lookup (tls-client header casing varies).
-            const locationKey = Object.keys(response.headers).find((k) => k.toLowerCase() === "location");
-            const location = locationKey ? response.headers[locationKey] : undefined;
-            if (location)
-                return location;
-            if (runtimeVerboseLogsEnabled()) {
-                logger.info(`[getMediaUrlRedirect] ${mediaUrlType} → ${response.status} (no Location) for ${mediaId.substring(0, 12)}…`);
-            }
-            return null;
-        }
-        catch (error) {
-            // Throw ở đây thường là transient (TlsClient recycle session giữa chừng) —
-            // 1 lần retry sau 1.5s là đủ; không retry thì probe rơi về null và job
-            // bị hoàn thành thiếu URL.
-            if (retryCount === 0) {
-                logger.warn(`[getMediaUrlRedirect] ${mediaUrlType || "(no type)"} threw for ${mediaId.substring(0, 12)}… (TLS recycle?), retrying in 1.5s`);
-                await new Promise((r) => setTimeout(r, 1500));
-                return this.fetchMediaUrlRedirect(mediaId, projectId, mediaUrlType, 1);
-            }
-            logger.warn(`[getMediaUrlRedirect] ${mediaUrlType || "(no type)"} failed for ${mediaId.substring(0, 12)}…: ${error?.message || error}`);
-            return null;
-        }
-    }
-    /**
-     * ✅ NEW API SHAPE: Veo 3.1 r2v dùng `{media: [{name, projectId}]}` để
-     * check status thay vì `{operations: [{operation: {name}, sceneId, status}]}`.
-     * Response cũng đổi sang `{media: [{mediaMetadata: {mediaStatus: {mediaGenerationStatus}}, video: {...}}]}`.
-     *
-     * Method này gửi format mới rồi convert response về LEGACY shape
-     * (`{operations: [...]}`) để downstream `processVideoStatusResult` không
-     * phải biết về shape mới.
-     */
+    /** Media-shape poll used by Veo 3.1 jobs; identical on Flow's rpc (the id is all it needs). */
     async batchCheckMediaGenerationStatus(items) {
-        if (!this.config.accessToken) {
-            throw new Error("Access token is required for status check");
-        }
-        if (items.length === 0) {
+        return this.pollFlowOperations(items.map((it) => ({ name: it.name, sceneId: it.sceneId })));
+    }
+    async pollFlowOperations(items) {
+        if (items.length === 0)
             return { operations: [] };
-        }
-        return this.executeWithTokenRefresh(async () => {
-            const url = `${this.sandboxBaseUrl}/video:batchCheckAsyncVideoGenerationStatus`;
-            const requestBody = JSON.stringify({
-                media: items.map((it) => ({ name: it.name, projectId: it.projectId })),
-            });
-            const response = await googleFetch({
-                profileId: this.config.profileId,
-                veo3ProjectId: this.config.veo3ProjectId,
-                locale: this.config.locale,
-                url,
-                method: "POST",
-                headers: this.getSandboxHeaders(),
-                body: requestBody,
-            });
-            if (!response.ok) {
-                const errorText = await response.text();
-                logger.error(`❌ [Poll Status:media] API Error: ${response.status} - ${errorText.substring(0, 300)}`);
-                if (this.isAuthError(response, errorText)) {
-                    const error = new Error("Access token đã hết hạn hoặc không hợp lệ.");
-                    error.response = response;
-                    error.errorText = errorText;
-                    throw error;
-                }
-                throw new Error(`Failed to check media status: ${response.statusText} - ${errorText}`);
-            }
-            const responseData = await response.json();
-            const mediaArr = Array.isArray(responseData?.media)
-                ? responseData.media
-                : [];
-            // Build map: media.name → original sceneId we passed (so upstream
-            // sceneIdToJob matching still works).
-            const nameToSceneId = new Map();
-            for (const it of items) {
-                if (it.sceneId)
-                    nameToSceneId.set(it.name, it.sceneId);
-            }
-            const operations = this.convertMediaArrayToPollOperations(mediaArr, nameToSceneId);
-            // Media-endpoint SUCCESSFUL responses do NOT embed a playable URL — resolve
-            // it from getMediaUrlRedirect (302 → signed flow-content.google/video URL),
-            // exactly as the web app does. Only for finished items missing a URL.
-            const nameToProjectId = new Map(items.map((it) => [it.name, it.projectId]));
-            await Promise.all(operations.map(async (op) => {
-                const video = op?.operation?.metadata?.video;
-                if (op?.status === "MEDIA_GENERATION_STATUS_SUCCESSFUL" &&
-                    video &&
-                    !video.fifeUrl) {
-                    const mediaId = video.mediaGenerationId || op?.operation?.metadata?.name;
-                    const resolved = await this.getMediaUrlRedirect(mediaId, nameToProjectId.get(mediaId));
-                    if (resolved)
-                        video.fifeUrl = resolved;
-                }
-            }));
-            if (runtimeVerboseLogsEnabled()) {
-                logger.info(`📋 [Poll Status:media] Returned ${operations.length} media entries`, {
-                    statuses: operations.map((o) => o.status),
-                });
-            }
-            return { operations };
+        const profileId = this.config.profileId;
+        if (!profileId)
+            throw new Error("Thiếu profileId — không thể kiểm tra trạng thái video trên Flow");
+        const states = await Promise.all(items.map((it) => this.readFlowMediaState(profileId, it.name)));
+        const mediaArr = states.map((state, i) => ({
+            name: items[i].name,
+            mediaMetadata: { mediaStatus: { mediaGenerationStatus: state?.status ?? "MEDIA_GENERATION_STATUS_PENDING" } },
+            video: { fifeUrl: state?.videoUrl ?? null },
+        }));
+        const nameToSceneId = new Map(items.filter((it) => it.sceneId).map((it) => [it.name, it.sceneId]));
+        const operations = this.convertMediaArrayToPollOperations(mediaArr, nameToSceneId);
+        operations.forEach((op, i) => {
+            const error = states[i]?.error;
+            if (error && op.operation?.metadata?.video)
+                op.operation.metadata.video.error = { message: error };
         });
+        return { operations };
+    }
+    /** One media's state via `jwpduf`; a finished one without a URL is completed from `getMedia`. */
+    async readFlowMediaState(profileId, mediaId) {
+        const callOpts = { userAgent: this.config.userAgent, sourcePath: this.flowSourcePath(), timeoutMs: FLOW_POLL_TIMEOUT_MS };
+        const payload = await callFlowRpc(profileId, FLOW_RPC.pollVideo, [null, null, [[mediaId]]], callOpts);
+        const rows = parsePollResponse(payload);
+        const state = rows.find((r) => r.operationId === mediaId) ?? rows[0] ?? null;
+        if (state && state.status === "MEDIA_GENERATION_STATUS_SUCCESSFUL" && !state.videoUrl) {
+            const media = parseMediaRow(await callFlowRpc(profileId, FLOW_RPC.getMedia, [mediaId], callOpts));
+            if (media?.videoUrl)
+                state.videoUrl = media.videoUrl;
+        }
+        return state;
+    }
+    /** Aspect code (1 = 9:16, 2 = 16:9) of an existing media, read from Flow; undefined when unknown. */
+    async readSourceAspect(profileId, mediaId) {
+        try {
+            const row = parseMediaRow(await callFlowRpc(profileId, FLOW_RPC.getMedia, [mediaId], {
+                userAgent: this.config.userAgent,
+                sourcePath: this.flowSourcePath(),
+                timeoutMs: FLOW_POLL_TIMEOUT_MS,
+            }));
+            return row?.aspectCode;
+        }
+        catch (err) {
+            logger.warn(`[Upscale] không đọc được tỉ lệ video nguồn ${mediaId.slice(0, 8)}: ${err instanceof Error ? err.message : err}`);
+            return undefined;
+        }
+    }
+    flowSourcePath() {
+        return this.config.veo3ProjectId ? `/project/${this.config.veo3ProjectId}` : "/";
+    }
+    async getMediaUrlRedirect(mediaId) {
+        const profileId = this.config.profileId;
+        if (!mediaId || !profileId)
+            return null;
+        try {
+            const row = parseMediaRow(await callFlowRpc(profileId, FLOW_RPC.getMedia, [mediaId], {
+                userAgent: this.config.userAgent,
+                sourcePath: this.flowSourcePath(),
+                timeoutMs: FLOW_POLL_TIMEOUT_MS,
+            }));
+            // Video rows carry a status code and a video url; image rows have neither a status
+            // nor a video, only their own signed image url.
+            return (row?.statusCode === undefined ? row?.thumbnailUrl : row?.videoUrl) ?? null;
+        }
+        catch (err) {
+            logger.warn(`[getMediaUrlRedirect] getMedia lỗi cho ${mediaId.slice(0, 8)}: ${err instanceof Error ? err.message : err}`);
+            return null;
+        }
     }
     /**
      * ✅ Helper: Poll video status và trả về status + videoUrl
@@ -3135,32 +1770,6 @@ export class Veo3Service {
         return null;
     }
     /**
-     * Helper: Create batch log for VIDEO_CREATION_TO_VIDEO_COMPLETION timer event
-     */
-    createVideoCompletionTimerLog(options) {
-        const { sessionId = `;${Date.now()}`, timerId = `VIDEO_CREATION_TO_VIDEO_COMPLETION${this.generateId()}`, currentTimeMs = Date.now(), eventTime = new Date().toISOString(), } = options;
-        return {
-            appEvents: [
-                {
-                    event: "VIDEO_CREATION_TO_VIDEO_COMPLETION",
-                    eventProperties: [
-                        { key: "TIMER_ID", stringValue: timerId },
-                        { key: "TOOL_NAME", stringValue: "PINHOLE" },
-                        { key: "CURRENT_TIME_MS", intValue: currentTimeMs },
-                        {
-                            key: "USER_AGENT",
-                            stringValue: this.config.userAgent || this.defaultHeaders["User-Agent"],
-                        },
-                        { key: "IS_DESKTOP" },
-                    ],
-                    activeExperiments: [],
-                    eventMetadata: { sessionId },
-                    eventTime,
-                },
-            ],
-        };
-    }
-    /**
      * Helper: Convert aspect ratio string to API enum format
      * Converts "16:9", "9:16" to VIDEO_ASPECT_RATIO_* enum
      * @public - Exposed for use by veo3JobProcessorService
@@ -3181,62 +1790,21 @@ export class Veo3Service {
         return ratioMap[aspectRatio] || "VIDEO_ASPECT_RATIO_LANDSCAPE";
     }
     /**
-     * Lấy lý do hỏng thật của một operation bằng shape `{media:[...]}`.
-     *
-     * Hai shape bù trừ nhau: `{operations:[...]}` trả `fifeUrl` nhưng KHÔNG kèm lý do hỏng;
-     * `{media:[...]}` trả lý do hỏng (vd `PUBLIC_ERROR_AUDIO_FILTERED`) nhưng không có URL.
-     * Poll chính dùng shape đầu để lấy URL, nên chỉ gọi hàm này khi gặp FAILED mà thiếu lý do.
-     *
-     * Không bao giờ throw ra ngoài — lỗi thì trả null để caller giữ nguyên hành vi cũ.
+     * Why a generation failed, for the poller's retry classification. Flow's status row only
+     * carries a numeric state, so this reports that state; a real failure reason has not been
+     * captured yet.
      */
-    async fetchMediaFailureReason(operationName, veo3ProjectId) {
+    async fetchMediaFailureReason(operationName, _veo3ProjectId) {
+        const profileId = this.config.profileId;
+        if (!profileId)
+            return null;
         try {
-            const data = await this.executeWithTokenRefresh(async () => {
-                const response = await googleFetch({
-                    profileId: this.config.profileId,
-                    veo3ProjectId: this.config.veo3ProjectId,
-                    locale: this.config.locale,
-                    url: `${this.sandboxBaseUrl}/video:batchCheckAsyncVideoGenerationStatus`,
-                    method: "POST",
-                    headers: this.getSandboxHeaders(),
-                    body: JSON.stringify({
-                        media: [{ name: operationName, projectId: veo3ProjectId }],
-                    }),
-                });
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                return response.json();
-            });
-            const media = Array.isArray(data?.media) ? data.media[0] : null;
-            return readMediaFailureMessage(media?.mediaMetadata?.mediaStatus);
+            return (await this.readFlowMediaState(profileId, operationName))?.error ?? null;
         }
         catch (error) {
             logger.warn(`[Poll Status:media] Không lấy được lý do hỏng cho op ${operationName.substring(0, 12)}: ${error?.message}`);
             return null;
         }
-    }
-    /**
-     * Helper: Create check status request
-     */
-    createCheckStatusRequest(operationName, sceneId, status = "MEDIA_GENERATION_STATUS_PENDING") {
-        return {
-            operations: [
-                {
-                    operation: {
-                        name: operationName,
-                    },
-                    sceneId,
-                    status,
-                },
-            ],
-        };
-    }
-    /**
-     * Generate a random ID (similar to UUID format)
-     */
-    generateId() {
-        return `${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}-${Math.random().toString(36).substr(2, 9)}-${Math.random().toString(36).substr(2, 9)}-${Math.random().toString(36).substr(2, 12)}`;
     }
     /**
      * Upload ảnh vào project Flow, trả về mediaId (UUID) dùng cho imageInputs /
@@ -3279,6 +1847,9 @@ export class Veo3Service {
                 timeoutMs: UPLOAD_IMAGE_TIMEOUT_MS,
             });
             const mediaId = extractUploadedMediaId(payload);
+            const size = readUploadedImageSize(payload);
+            if (size)
+                rememberImageSize(mediaId, size.width, size.height);
             logger.info(`✅ [Upload Image] mediaId: ${mediaId}`);
             return mediaId;
         }
@@ -3378,8 +1949,8 @@ export class Veo3Service {
                 // BOQ `cz8Z4b` = /FlowService.BatchDeleteAssets. Nói thẳng ra để UI
                 // không báo "đã xoá" trong khi Google vẫn giữ nguyên file.
                 if (response.status === 500) {
-                    throw new Error('MEDIA_DELETE_UNAVAILABLE: Google không xoá được media này nữa ' +
-                        '(API cũ trả lỗi 500). Ảnh vẫn còn trong thư viện Flow.');
+                    throw new Error("MEDIA_DELETE_UNAVAILABLE: Google không xoá được media này nữa " +
+                        "(API cũ trả lỗi 500). Ảnh vẫn còn trong thư viện Flow.");
                 }
                 throw new Error(`Failed to delete media: ${response.statusText} - ${errorText}`);
             }
@@ -3572,43 +2143,6 @@ export class Veo3Service {
             remainingCredits: result.remainingCredits,
         };
     }
-    /**
-     * Expand a user prompt with a style preamble via Veo3's generateExpandedPrompt
-     * API. Falls back to the original prompt on any error.
-     */
-    async expandPromptByStyle(userPrompt, stylePreamble, sessionId) {
-        if (!userPrompt || userPrompt.trim().length === 0) {
-            throw new Error("User prompt cannot be empty");
-        }
-        if (!stylePreamble || stylePreamble.trim().length === 0) {
-            throw new Error("Style preamble cannot be empty");
-        }
-        const cookies = this.config.cookies;
-        if (!cookies) {
-            throw new Error("Cookies not available for Veo3 prompt expansion");
-        }
-        const preambleWithLanguageInstruction = `${stylePreamble}
-
-CRITICAL LANGUAGE REQUIREMENT:
-- The expanded prompt MUST be written entirely in ENGLISH
-- ONLY exception: Keep any Vietnamese dialogue/speech exactly as provided in the original prompt
-- All scene descriptions, camera movements, actions, and technical terms MUST be in English
-- CRITICAL: All character voices MUST speak in VIETNAMESE language
-- Characters must say their dialogue in Vietnamese with voice characteristics described in English
-- Example: "character says in warm, gentle voice (in Vietnamese): 'Xin chào bạn!'" ← Vietnamese dialogue with English voice description
-- Example: "whispers softly in Vietnamese: 'Mẹ ơi'" ← clear Vietnamese language indication`;
-        try {
-            const expandedPrompt = await this.callGenerateExpandedPromptAPI(userPrompt, preambleWithLanguageInstruction, cookies, sessionId);
-            if (!expandedPrompt || expandedPrompt.trim().length === 0) {
-                throw new Error("Expansion resulted in empty prompt");
-            }
-            return expandedPrompt;
-        }
-        catch (error) {
-            logger.error("[Veo3Service] expandPromptByStyle failed:", error);
-            return userPrompt;
-        }
-    }
 }
 /**
  * Product slot in the createProject args. Captured verbatim from the live web
@@ -3618,20 +2152,3 @@ CRITICAL LANGUAGE REQUIREMENT:
 Veo3Service.FLOW_PRODUCT_SLOT = 22;
 Veo3Service.FLOW_PRODUCT_TOOL = "PINHOLE";
 Veo3Service.UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/**
- * Resolve a media's playable/download URL. Veo 3.1 (useV2ModelConfig) media
- * poll responses are SUCCESSFUL but carry NO embedded fifeUrl — the real
- * browser fetches the URL separately from this labs.google trpc endpoint,
- * which 302-redirects to a signed `flow-content.google/video/<id>?…` URL.
- * We read that `Location` header (followRedirects=false) instead of following
- * it (which would download the media bytes). Returns null on failure.
- */
-// The exact mediaUrlType enum that yields the playable /video/ URL is not
-// documented; we probe a candidate list once and cache the winner process-wide.
-// MEDIA_URL_TYPE_VIDEO / MEDIA_URL_TYPE_ORIGINAL đã bị Google trả 400 ổn định
-// (production 2026-09-10) — bỏ khỏi probe, chỉ còn biến thể không-param.
-Veo3Service.cachedVideoUrlType = null;
-Veo3Service.VIDEO_URL_TYPE_CANDIDATES = [
-    "", // NO mediaUrlType → endpoint returns the primary media (the video). This
-    // is what the web app's <video> load uses; confirmed 302 → /video/.
-];

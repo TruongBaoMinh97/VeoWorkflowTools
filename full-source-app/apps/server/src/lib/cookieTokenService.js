@@ -57,8 +57,25 @@ export class FlowSessionRemintRequiredError extends Error {
         this.grantExpiredAt = grantExpiredAt;
     }
 }
+
+/**
+ * Google retired the Labs NextAuth endpoint that used to return the ya29
+ * bearer token. Re-login cannot repair HTTP 410; current Flow generation uses
+ * the cookie-authenticated batchexecute transport instead.
+ */
+export class FlowAuthEndpointRetiredError extends Error {
+    constructor() {
+        super('Google đã tắt endpoint cấp access token cũ (labs.google auth/session, HTTP 410). Luồng Flow mới dùng cookie trực tiếp.');
+        this.code = 'FLOW_AUTH_RETIRED';
+        this.name = 'FlowAuthEndpointRetiredError';
+    }
+}
+
+const AUTH_RETIRED_BACKOFF_MS = 10 * 60 * 1000;
+
 export class CookieTokenService {
     constructor() {
+        this.authRetiredUntil = 0;
         this.tokenCache = new Map();
         this.TOKEN_TTL_MS = 5 * 60 * 60 * 1000; // 5 hours (conservative TTL for Google access tokens)
     }
@@ -116,6 +133,8 @@ export class CookieTokenService {
                     logger.info(`[CookieTokenService] Cookie set changed for profile ${profileId.substring(0, 8)} — fetching a fresh access token`);
                 }
             }
+            if (Date.now() < this.authRetiredUntil)
+                throw new FlowAuthEndpointRetiredError();
             // Parse cookies - handle both JSON array format and header string format
             let cookiesHeaderString;
             // Essential cookies for Google Labs auth (to avoid 431 error from too many cookies).
@@ -254,6 +273,11 @@ export class CookieTokenService {
                 statusText: response.statusText,
                 bodyLength: response.body?.length ?? 0,
             });
+            if (response.status === 410) {
+                this.authRetiredUntil = Date.now() + AUTH_RETIRED_BACKOFF_MS;
+                logger.warn('[CookieTokenService] labs auth/session retired (410) — Flow generation will use cookie-authenticated RPC');
+                throw new FlowAuthEndpointRetiredError();
+            }
             if (!response.ok) {
                 logger.error('❌ [CookieTokenService] HTTP Error', {
                     status: response.status,
@@ -367,6 +391,8 @@ export class CookieTokenService {
             };
         }
         catch (error) {
+            if (error instanceof FlowAuthEndpointRetiredError)
+                throw error;
             logger.error('❌ [CookieTokenService] Fatal error in getAccessTokenFromCookies:', {
                 message: error.message,
                 stack: error.stack?.substring(0, 500),

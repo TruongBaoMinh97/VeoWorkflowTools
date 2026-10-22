@@ -288,45 +288,9 @@ export const genNormalService = {
                     projectId: project.id,
                     profileId: pp.profileId
                 });
-                // Refresh accessToken from partition cookies when missing or expired.
-                let accessToken = pp.profile.accessToken;
-                const expired = !pp.profile.accessTokenExpires ||
-                    new Date(pp.profile.accessTokenExpires) < new Date();
-                if (!accessToken || expired) {
-                    logger.info(`[GenNormal] Profile missing or expired accessToken, refreshing from partition`, {
-                        profileId: pp.profileId,
-                        hasToken: !!accessToken,
-                        tokenExpired: pp.profile.accessTokenExpires ? expired : 'no expiry',
-                    });
-                    try {
-                        const { getProfileCookies } = await import('../../utils/profileCookies.js');
-                        const { cookieTokenService } = await import('../../lib/cookieTokenService.js');
-                        const profileCookies = await getProfileCookies(pp.profile.id);
-                        if (profileCookies && profileCookies.trim() !== '') {
-                            const { accessToken: refreshed, expiresAt } = await cookieTokenService.getAccessTokenFromCookies(profileCookies, pp.profile.id);
-                            await prisma.profile.update({
-                                where: { id: pp.profile.id },
-                                data: {
-                                    accessToken: refreshed,
-                                    accessTokenExpires: expiresAt,
-                                    updatedAt: new Date(),
-                                },
-                            });
-                            accessToken = refreshed;
-                            logger.info(`[GenNormal] accessToken refreshed`, {
-                                profileId: pp.profileId,
-                                expiresAt: expiresAt?.toISOString(),
-                            });
-                        }
-                    }
-                    catch (error) {
-                        logger.error(`[GenNormal] Failed to refresh accessToken from partition`, {
-                            profileId: pp.profileId,
-                            error: error.message,
-                        });
-                        // Continue with empty token - will fail with 401 but user will see error
-                    }
-                }
+                // Google retired the Labs access-token endpoint. Current Flow image/video
+                // generation authenticates with this profile's stored cookies instead.
+                const accessToken = pp.profile.accessToken;
                 // Get cookies from partition for auto-refresh capability on 401
                 const cookiesString = await getCookiesForGenNormal(pp.profile);
                 // Update provider config with profile credentials + proxy (so tRPC

@@ -21,6 +21,7 @@ import { globalProxyManager } from './GlobalProxyManager.js';
 import { getProfileCookiesCompat } from '../utils/profileCookies.js';
 import { logger } from './logger.js';
 import { getHostUa } from './hostChromeUa.js';
+import { resolveRpcId } from './flowRpcRegistry.js';
 const BOQ_ENDPOINT = 'https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute';
 const FLOW_ORIGIN = 'https://flow.google.com';
 const FLOW_HOME = 'https://flow.google.com/';
@@ -40,6 +41,8 @@ const WIZ_KEYS = {
 export const FLOW_RPC = {
     /** Create a project → `["<uuid>", ["<name>"]]` */
     createProject: 'jHPbke',
+    /** Generate an image — synchronous, answers with the finished image URL (see flowImageGen.ts) */
+    generateImage: 'ogiZ0b',
     /** Credits / quota → `[credits, tier, serviceTier, sku, null, subscriptionCredits]` */
     credits: 'nzlxg',
     /** Project data incl. the preset voice catalogue → payload[3] is the voice list */
@@ -53,14 +56,31 @@ export const FLOW_RPC = {
      * the REST `aisandbox-pa …/v1/flow/uploadImage`, which answers 400 since Sept 2026.
      */
     uploadImage: 'maseQ',
+    /** Project metadata (name, model catalogue ids) → ngNC2 */
+    getProject: 'ngNC2',
+    /** Project list → UpteDb */
+    listProjects: 'UpteDb',
+    /** Fetch a finished media row by id (video / upscaled URLs) → as29s */
+    getMedia: 'as29s',
+    /** Video generation, one rpc per mode — poll with `pollVideo`, read the result with `getMedia` */
+    generateVideoText: 'YhhmEf',
+    generateVideoStartImage: 'eb1hJf',
+    generateVideoStartAndEndImage: 'nprQif',
+    generateVideoReferences: 'MZZa6b',
+    /** Upscale a generated video (1080p / 4K) → p0UkFb */
+    upsampleVideo: 'p0UkFb',
+    /** Poll one or more generation operations → jwpduf */
+    pollVideo: 'jwpduf',
     /** Telemetry events batching → WuwhI */
     telemetry: 'WuwhI',
     /** Auxiliary status / ping → DTaVef */
     auxStatus: 'DTaVef',
 };
+/** Product slot Flow expects in `jHPbke` / `ogiZ0b` args (PINHOLE); copied from the web client, enum undecoded. */
+export const FLOW_PRODUCT_SLOT = 22;
 const SESSION_TTL_MS = 10 * 60000;
 const REQUEST_TIMEOUT_MS = 30000;
-/** Matches the real host Chrome used by the verification-browser lane. */
+/** Matches the desktop Chrome the TLS lane already impersonates (version from env). */
 const DEFAULT_USER_AGENT = getHostUa();
 /** Flow answered with its logged-out shell — cookies cannot be repaired by retrying. */
 export class FlowSignedOutError extends Error {
@@ -191,13 +211,17 @@ async function bootstrapSession(profileId, userAgent, rereadCookies = true) {
             ? 'WIZ_global_data không có tài khoản đăng nhập'
             : null;
     if (signedOut) {
+        // The jar may hold cookies from before a re-login / warm-up sync. Drop it, and if the
+        // cookies read back now differ, try once more before declaring the profile signed out.
         invalidateCookieJar(profileId);
-        if (rereadCookies && (await flowCookieHeader(profileId)) !== cookies)
+        if (rereadCookies && (await flowCookieHeader(profileId)) !== cookies) {
             return bootstrapSession(profileId, userAgent, false);
+        }
         throw new FlowSignedOutError(signedOut);
     }
-    if (!xsrfToken || !buildLabel || !sessionId)
+    if (!xsrfToken || !buildLabel || !sessionId) {
         throw new FlowRpcError('bootstrap', 'WIZ_global_data thiếu at/bl/f.sid — Flow có thể đã đổi trang');
+    }
     logger.info(`[FlowBoq] session ready for ${profileId.substring(0, 8)} (${email}) bl=${buildLabel}`);
     return { xsrfToken, buildLabel, sessionId, email, fetchedAt: Date.now() };
 }
@@ -346,6 +370,8 @@ async function postRpc(profileId, session, rpcid, args, userAgent, sourcePath, t
 export async function callFlowRpc(profileId, rpcid, args, opts = {}) {
     if (!profileId)
         throw new FlowRpcError(rpcid, 'thiếu profileId');
+    // The caller names the rpc by its default id; the discovered table may know a newer alias.
+    const wireId = resolveRpcId(rpcid);
     const userAgent = opts.userAgent ?? DEFAULT_USER_AGENT;
     // The web client sends the path of the page making the call. Flow answers the
     // same either way, but matching it keeps our traffic shaped like a real tab.
@@ -353,12 +379,12 @@ export async function callFlowRpc(profileId, rpcid, args, opts = {}) {
     for (let attempt = 0; attempt < 2; attempt++) {
         const { session, fromCache } = await getSession(profileId, userAgent);
         const resolvedArgs = typeof args === 'function' ? await args() : args;
-        const { status, body } = await postRpc(profileId, session, rpcid, resolvedArgs, userAgent, sourcePath, opts.timeoutMs ?? REQUEST_TIMEOUT_MS);
+        const { status, body } = await postRpc(profileId, session, wireId, resolvedArgs, userAgent, sourcePath, opts.timeoutMs ?? REQUEST_TIMEOUT_MS);
         // A 200 means Flow accepted and ran the RPC. Retrying an unreadable answer
         // would re-run a non-idempotent call (createProject would make a second
         // project), so the parse error is surfaced instead.
         if (status === 200) {
-            return parseBatchExecute(body, rpcid);
+            return parseBatchExecute(body, wireId);
         }
         // Status 0 is node-tls-client's "connection never completed" — the shared
         // TLS session may be wedged, so recycle it like every other Google lane.
@@ -370,24 +396,28 @@ export async function callFlowRpc(profileId, rpcid, args, opts = {}) {
         const sessionMayBeStale = status === 401 || status === 403 || (status === 400 && fromCache);
         if (sessionMayBeStale && attempt === 0) {
             invalidateFlowSession(profileId, session);
-            logger.warn(`[FlowBoq] ${rpcid}: HTTP ${status}, bootstrap lại rồi thử lại`);
+            logger.warn(`[FlowBoq] ${wireId}: HTTP ${status}, bootstrap lại rồi thử lại`);
             continue;
         }
-        throw new FlowRpcError(rpcid, `HTTP ${status} — ${body.slice(0, 200)}`, status);
+        throw new FlowRpcError(wireId, `HTTP ${status} — ${body.slice(0, 200)}`, status);
     }
     throw new FlowRpcError(rpcid, 'hết lượt thử sau khi làm mới phiên');
 }
-
 const PAYGATE_TIER_BY_CODE = {
     1: 'PAYGATE_TIER_ONE',
     2: 'PAYGATE_TIER_TWO',
 };
+/** Only the codes measured against aisandbox-pa /credits; anything else stays unknown (''). */
 const SERVICE_TIER_BY_CODE = { 3: 'SERVICE_TIER_ADVANCED' };
 const SKU_BY_CODE = { 3: 'G1_TIER2' };
-
+/**
+ * Map the `nzlxg` payload `[credits, paygateTier, serviceTier, sku, null, subscriptionCredits]`
+ * onto the shape the aisandbox-pa `/credits` endpoint used to return.
+ */
 export function parseCreditsPayload(payload) {
-    if (!Array.isArray(payload) || typeof payload[0] !== 'number')
+    if (!Array.isArray(payload) || typeof payload[0] !== 'number') {
         throw new FlowRpcError(FLOW_RPC.credits, `payload credits không hợp lệ: ${JSON.stringify(payload)?.slice(0, 120)}`);
+    }
     const lookup = (table, code) => typeof code === 'number' ? (table[code] ?? '') : '';
     return {
         credits: payload[0],
@@ -397,11 +427,16 @@ export function parseCreditsPayload(payload) {
         ...(typeof payload[5] === 'number' ? { subscriptionCredits: payload[5] } : {}),
     };
 }
-
-const SIGN_IN_CACHE_MS = 5 * 60_000;
+const SIGN_IN_CACHE_MS = 5 * 60000;
 const signInCache = new Map();
-
-/** Ask Flow itself whether the stored profile cookies still represent a signed-in account. */
+/**
+ * Whether the profile's stored cookies still give a signed-in Flow session. Google rotates
+ * `__Secure-1PSIDTS` / `SIDCC` about hourly and rejects stale copies, so cookie presence
+ * alone proves nothing — this asks Flow itself (`nzlxg`, cookie-only). `unknown` means the
+ * check could not run (network, proxy), not that the profile is signed out.
+ *
+ * `fresh` re-reads the cookies and bypasses the 5-minute cache; use it to verify a login.
+ */
 export async function checkFlowSignIn(profileId, opts = {}) {
     const cached = signInCache.get(profileId);
     if (!opts.fresh && cached && Date.now() - cached.at < SIGN_IN_CACHE_MS)
@@ -410,13 +445,13 @@ export async function checkFlowSignIn(profileId, opts = {}) {
         invalidateFlowSession(profileId);
     let state;
     try {
-        await callFlowRpc(profileId, FLOW_RPC.credits, [], { timeoutMs: 20_000 });
+        await callFlowRpc(profileId, FLOW_RPC.credits, [], { timeoutMs: 20000 });
         state = 'signed-in';
     }
-    catch (error) {
-        state = error instanceof FlowSignedOutError ? 'signed-out' : 'unknown';
+    catch (err) {
+        state = err instanceof FlowSignedOutError ? 'signed-out' : 'unknown';
         if (state === 'unknown')
-            logger.warn(`[FlowBoq] không kiểm tra được đăng nhập ${profileId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+            logger.warn(`[FlowBoq] không kiểm tra được đăng nhập ${profileId.slice(0, 8)}: ${err instanceof Error ? err.message : err}`);
     }
     if (state !== 'unknown')
         signInCache.set(profileId, { at: Date.now(), state });
