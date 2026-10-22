@@ -14,9 +14,16 @@ describe('product-only mannequin alternative',()=>{
  });
  it('keeps successful requests unchanged and ignores network/unrelated policy failures',async()=>{
   const success=vi.fn().mockResolvedValue(['image']);expect(await run(success)).toEqual({results:['image']});expect(success).toHaveBeenCalledTimes(1);
-  for(const message of ['fetch failed','PUBLIC_ERROR_MINOR_UPLOAD','PUBLIC_ERROR_HIGH_TRAFFIC']){
+  for(const message of ['fetch failed','PUBLIC_ERROR_VIOLENCE','PUBLIC_ERROR_HIGH_TRAFFIC']){
    const generate=vi.fn().mockRejectedValue(new Error(message));await expect(run(generate)).rejects.toThrow(message);expect(generate).toHaveBeenCalledTimes(1);
   }
+ });
+ it('falls back to a mannequin after a child-reference rejection',async()=>{
+  const generate=vi.fn().mockRejectedValueOnce(new Error('PUBLIC_ERROR_MINOR_UPLOAD')).mockResolvedValueOnce([{name:'mannequin-result'}]);
+  const result=await run(generate);
+  expect(generate).toHaveBeenCalledTimes(2);
+  expect(generate.mock.calls[1][0][0]).toEqual({prompt:MANNEQUIN_PROMPT,referenceImageMediaIds:['dress']});
+  expect(result).toMatchObject({results:[{name:'mannequin-result'}],fallbackPrompt:MANNEQUIN_PROMPT});
  });
  it('stops after one failed alternative instead of restarting the model branch',async()=>{
   const generate=vi.fn().mockRejectedValue(new Error('PUBLIC_ERROR_SEXUAL'));

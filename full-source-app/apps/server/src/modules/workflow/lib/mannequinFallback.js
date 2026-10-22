@@ -17,9 +17,11 @@ One standalone photograph, not a collage. Clearly artificial retail display, neu
 
 function eligible(error) {
     const text = [error?.errorText, error?.message, error?.reason, error?.code].filter(Boolean).join(' ');
-    // Only this opt-in clothing alternative; other policy refusals stay in review.
-    if (/PUBLIC_ERROR_(?:MINOR_UPLOAD|VIOLENCE|HATE|HARASSMENT|DANGEROUS|IP_VIOLATION|COPYRIGHT|CELEBRITY|PUBLIC_FIGURE)/i.test(text)) return false;
-    return /PUBLIC_ERROR_(?:SEXUAL|UNSAFE_GENERATION)\b|Nội dung bị từ chối: Chứa yếu tố nhạy cảm\/khiêu dâm|vi phạm chính sách an toàn/i.test(text);
+    // This opt-in clothing alternative may safely replace a rejected child or
+    // human presentation with an obviously artificial retail mannequin.
+    // Unrelated policy, transport and quota failures remain unchanged.
+    if (/PUBLIC_ERROR_(?:VIOLENCE|HATE|HARASSMENT|DANGEROUS|IP_VIOLATION|COPYRIGHT|CELEBRITY|PUBLIC_FIGURE)/i.test(text)) return false;
+    return /PUBLIC_ERROR_(?:SEXUAL|UNSAFE_GENERATION|MINOR_UPLOAD)\b|Nội dung bị từ chối: Chứa yếu tố nhạy cảm\/khiêu dâm|vi phạm chính sách an toàn/i.test(text);
 }
 
 export async function generateWithMannequinFallback({ enabled, images, count, generate, isCancelled = () => false }) {

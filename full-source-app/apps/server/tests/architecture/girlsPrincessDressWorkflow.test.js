@@ -49,7 +49,7 @@ describe('girls princess dress Etsy workflow preset', () => {
             model: 'GEM_PIX_2',
             ratio: '1:1',
             count: 1,
-            contentFallback: 'none',
+            contentFallback: 'mannequin',
         });
         expect(schema.inputs).toEqual([
             expect.objectContaining({ nodeId: 'girls-dress-product', batchInputType: 'image', folderInput: true }),
