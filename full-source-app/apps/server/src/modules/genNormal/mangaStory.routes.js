@@ -14,6 +14,7 @@ export async function registerMangaStoryRoutes(app,options={}) {
     app.get(base,handle(req=>store.context(req.params.projectId)));
     app.get(base+'/history',handle(req=>store.history(req.params.projectId)));
     app.put(base,handle(req=>{const b=z.object({revision:z.number().int().min(0),config:mangaConfigSchema}).parse(req.body);return store.save(req.params.projectId,b.config,b.revision);}));
+    app.post(base+'/patch',handle(req=>{const b=z.object({revision:z.number().int().min(0),config:mangaConfigSchema.optional(),patchText:z.string().min(1).max(1000000),allowAppend:z.boolean().optional().default(false)}).parse(req.body);return store.patchPrompts(req.params.projectId,b);}));
     app.post(base+'/preview',handle(req=>store.preview(req.params.projectId,mangaConfigSchema.parse(req.body))));
     app.post(base+'/assets',handle(req=>store.importAsset(req.params.projectId,z.object({path:z.string().min(1)}).parse(req.body).path)));
     app.get(base+'/assets/:asset',handle(async(req)=>{await store.project(req.params.projectId);const bytes=await readFile(store.assetPath(req.params.projectId,req.params.asset));const mime=req.params.asset.endsWith('webp')?'image/webp':/\.jpe?g$/.test(req.params.asset)?'image/jpeg':'image/png';return {dataUrl:`data:${mime};base64,${bytes.toString('base64')}`};}));

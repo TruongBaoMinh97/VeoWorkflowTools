@@ -41,6 +41,46 @@ export async function hydrateStoryPayload(value) {
     if (!path.isAbsolute(payload.snapshotPath || '') || path.basename(payload.snapshotPath) !== 'story-manifest.json') throw new Error('Snapshot truyện không hợp lệ.');
     return { ...payload, snapshot: JSON.parse(await readFile(payload.snapshotPath, 'utf8')) };
 }
+const GENERIC_CHAR_TOKENS = new Set(['home', 'out', 'outdoor', 'indoor', 'bank', 'work', 'default', 'young', 'old', 'past', 'char', 'main', 'woman', 'man', 'lady', 'girl', 'boy', 'wife', 'husband']);
+function extractCharacterNameTokens(character) {
+    const raw = [
+        String(character?.character_id || '').split('_')[0],
+        ...String(character?.display_name || '').split(/[^A-Za-z]+/),
+    ];
+    return [...new Set(
+        raw
+            .map(t => t.trim())
+            .filter(t => t.length >= 3 && /^[A-Za-z]+$/.test(t) && !GENERIC_CHAR_TOKENS.has(t.toLowerCase()) && !/^char\d*$/i.test(t))
+    )];
+}
+
+export function detectGhostCharacterWarnings(doc, scene) {
+    const visibleIds = new Set(scene?.visible_character_ids || []);
+    const characters = Array.isArray(doc?.characters) ? doc.characters : [];
+    const visibleTokens = new Set();
+    for (const c of characters) {
+        if (visibleIds.has(c.character_id)) {
+            for (const token of extractCharacterNameTokens(c)) visibleTokens.add(token.toLowerCase());
+        }
+    }
+    const cleanPrompt = String(scene?.prompt_en || '').replace(/@[A-Za-z][A-Za-z0-9_]*/g, ' ');
+    const warnings = [];
+    const seenTokens = new Set();
+    for (const c of characters) {
+        if (visibleIds.has(c.character_id)) continue;
+        for (const token of extractCharacterNameTokens(c)) {
+            const lower = token.toLowerCase();
+            if (visibleTokens.has(lower) || seenTokens.has(lower)) continue;
+            const regex = new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+            if (regex.test(cleanPrompt)) {
+                seenTokens.add(lower);
+                warnings.push(`Cảnh ${scene.scene_id} nhắc tới tên "${token}" trong prompt nhưng không gắn thẻ @${c.character_id} (dễ làm AI vẽ thừa người hoặc rò rỉ câu mẫu).`);
+            }
+        }
+    }
+    return warnings;
+}
+
 export function compileScene(doc, scene, library = {}, options = {}) {
     storyId(scene.scene_id);
     if (doc.scenes.filter(s => s.scene_id === scene.scene_id).length !== 1) throw new Error('Mã cảnh trùng.');
@@ -56,6 +96,7 @@ export function compileScene(doc, scene, library = {}, options = {}) {
     const mentioned = [...String(scene.prompt_en || '').matchAll(/@([A-Za-z][A-Za-z0-9_]*)/g)].map(m => m[1]);
     if (mentioned.some(id => !ids.includes(id)) || ids.some(id => !mentioned.includes(id))) throw new Error('Mã @ trong prompt không khớp nhân vật.');
     if (!scene.prompt_en?.trim()) throw new Error('Thiếu prompt cảnh.');
+    const warnings = detectGhostCharacterWarnings(doc, scene);
     const images = [], instructions = [], missing = [];
     let prompt = scene.prompt_en;
     for (const id of ids) {
@@ -87,7 +128,7 @@ export function compileScene(doc, scene, library = {}, options = {}) {
     const style = doc.style.style_prompt_en.trim();
     if (!prompt.includes(style)) prompt = `${style}\n${prompt}`;
     prompt = `${instructions.join('\n')}\nAspect ratio: ${doc.aspect_ratio || '16:9'}.\n${prompt}\nAvoid: ${scene.negative_prompt_en || 'Text, watermark, duplicate or additional characters.'}`;
-    return { scene, prompt, images, missing, ready: !missing.length, referenceLimitVerified: options.referenceLimitVerified === true };
+    return { scene, prompt, images, missing, warnings, ready: !missing.length, referenceLimitVerified: options.referenceLimitVerified === true };
 }
 export async function previewStory(document, library = {}, options = {}) {
     const doc = parseStory(document);

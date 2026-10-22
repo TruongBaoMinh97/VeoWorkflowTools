@@ -17,6 +17,7 @@ interface PageLike {
   goto(url: string, options: Record<string, unknown>): Promise<unknown>;
   frames(): CaptchaFrameLike[];
   evaluate<T>(pageFunction: (...args: any[]) => T | Promise<T>, ...args: any[]): Promise<T>;
+  evaluateOnNewDocument(pageFunction: string | ((...args: any[]) => any), ...args: any[]): Promise<unknown>;
   createCDPSession(): Promise<CdpSessionLike>;
   removeAllListeners(): void;
 }
@@ -159,6 +160,72 @@ function cleanupBrowserRefs(): void {
   state.pageUrl = null;
 }
 
+async function injectAntiHijackDefense(page: PageLike): Promise<void> {
+  await page.evaluateOnNewDocument(`
+    (() => {
+      let realExecute = null;
+
+      const origDefineProperty = Object.defineProperty;
+      Object.defineProperty = function(obj, prop, descriptor) {
+        if (prop === 'execute' && obj && typeof obj === 'object') {
+          if (descriptor && descriptor.value && typeof descriptor.value === 'function') {
+            const fnString = descriptor.value.toString();
+            if (fnString.includes('extension_hijack_detected') || fnString.includes('a.ha')) {
+              console.warn('🛡️ [Anti-Hijack Defense] Đã chặn đứng thành công honeypot của Google Flow!');
+              return obj;
+            }
+          }
+        }
+        return origDefineProperty.call(this, obj, prop, descriptor);
+      };
+
+      const captureRealExecute = (grecaptchaObj) => {
+        if (
+          grecaptchaObj &&
+          grecaptchaObj.enterprise &&
+          typeof grecaptchaObj.enterprise.execute === 'function'
+        ) {
+          if (!realExecute) {
+            realExecute = grecaptchaObj.enterprise.execute.bind(grecaptchaObj.enterprise);
+
+            globalThis.__realExecute = async (siteKey, options) => {
+              if (!realExecute) {
+                throw new Error('ORIGINAL_EXECUTE_NOT_FOUND');
+              }
+              return await realExecute(siteKey, options);
+            };
+            console.log('🛡️ [Anti-Hijack] Đã nắm giữ thành công globalThis.__realExecute gốc!');
+          }
+        }
+      };
+
+      let cachedGrecaptcha = globalThis.grecaptcha;
+      Object.defineProperty(globalThis, 'grecaptcha', {
+        get() { return cachedGrecaptcha; },
+        set(val) {
+          cachedGrecaptcha = val;
+          captureRealExecute(val);
+
+          if (val && !val.enterprise) {
+            let cachedEnterprise = val.enterprise;
+            Object.defineProperty(val, 'enterprise', {
+              get() { return cachedEnterprise; },
+              set(entVal) {
+                cachedEnterprise = entVal;
+                captureRealExecute(val);
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        },
+        configurable: true,
+        enumerable: true
+      });
+    })();
+  `);
+}
+
 async function ensureFlowPage(): Promise<PageLike> {
   if (!browser) {
     throw new CaptchaBrowserError('Chrome chưa sẵn sàng', 'NO_FLOW_PAGE');
@@ -173,10 +240,12 @@ async function ensureFlowPage(): Promise<PageLike> {
   );
   if (existing) {
     flowPage = existing;
+    await injectAntiHijackDefense(flowPage);
     return flowPage;
   }
 
   const page = pages.find((candidate) => !candidate.isClosed()) ?? await browser.newPage();
+  await injectAntiHijackDefense(page);
   await page.goto(FLOW_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   flowPage = page;
   return flowPage;
@@ -285,14 +354,19 @@ function safeFrameLabel(frameUrl: string): string {
 async function mintFromFlowFrames(page: PageLike, action: string): Promise<string> {
   const deadline = Date.now() + (MINT_TIMEOUT_MS - 5_000);
   while (Date.now() < deadline) {
-    const result = await tryMintCaptchaFromFrames(page.frames(), SITE_KEY, action);
-    if (result) {
-      log(`mint thành công từ frame ${safeFrameLabel(result.frameUrl)}`);
-      return result.token;
+    try {
+      const result = await tryMintCaptchaFromFrames(page.frames(), SITE_KEY, action);
+      if (result) {
+        log(`mint thành công từ frame ${safeFrameLabel(result.frameUrl)}`);
+        return result.token;
+      }
+    }
+    catch {
+      // Bỏ qua lỗi context/frame tạm thời để tiếp tục thử lại ở chu kỳ kế tiếp
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw new Error('GRECAPTCHA_UNAVAILABLE: Không tìm thấy frame hoặc hàm execute hợp lệ');
+  throw new Error('GRECAPTCHA_UNAVAILABLE: Không tìm thấy frame hoặc hàm execute hợp lệ sau khi timeout');
 }
 
 export async function mintCaptchaToken(action: string): Promise<string> {

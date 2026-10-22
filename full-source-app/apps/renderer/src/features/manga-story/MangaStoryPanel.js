@@ -221,6 +221,10 @@ function MangaStoryPanel({ projectId, onUpdated }) {
   const [collapsedChars, setCollapsedChars] = u.useState({});
   const [activeSection, setActiveSection] = u.useState('all');
   const [zoomMedia, setZoomMedia] = u.useState(null);
+  const [patchedIds, setPatchedIds] = u.useState([]);
+  const [patchNotes, setPatchNotes] = u.useState({});
+  const [patchOpen, setPatchOpen] = u.useState(false);
+  const [patchTextInput, setPatchTextInput] = u.useState('');
 
   const base = '/api/gen-normal/projects/' + projectId + '/manga-story';
   const live = u.useRef(true);
@@ -244,6 +248,8 @@ function MangaStoryPanel({ projectId, onUpdated }) {
       setDirty(false);
       setPreview([]);
       setSelected([]);
+      setPatchedIds([]);
+      setPatchNotes({});
     }
     return data;
   };
@@ -325,6 +331,47 @@ function MangaStoryPanel({ projectId, onUpdated }) {
     setDirty(false);
     return saved.revision;
   };
+
+  const applyPromptPatch = (rawText, sourceLabel = 'bản vá') =>
+    act(async () => {
+      const trimmed = String(rawText ?? '').trim();
+      if (!trimmed) throw Error('Nội dung bản vá cảnh lỗi đang trống.');
+      const result = Al(
+        await ye.post(base + '/patch', {
+          revision,
+          config: cfg,
+          patchText: trimmed,
+          allowAppend: true,
+        })
+      );
+      setCfg(result.config);
+      setRevision(result.revision);
+      setDirty(false);
+      setPreview(result.rows || []);
+      const patchedList = result.patchedSceneIds || [];
+      setPatchedIds(patchedList);
+      setPatchNotes(result.notes || {});
+      const patchedSet = new Set(patchedList);
+      const validPatchedIds = (result.rows || [])
+        .filter((r) => r.ready && !r.error && patchedSet.has(r.scene.scene_id))
+        .map((r) => r.scene.scene_id);
+      setSelected(validPatchedIds);
+      setVerified(true);
+      setPatchOpen(false);
+      setPatchTextInput('');
+      setMessage(
+        'Đã vá thành công ' +
+          patchedList.length +
+          ' cảnh từ ' +
+          sourceLabel +
+          ' (' +
+          patchedList.join(', ') +
+          ') và tự động tích chọn ' +
+          validPatchedIds.length +
+          ' cảnh để tạo lại.'
+      );
+      setTimeout(() => scrollToSection('sec4', sec4Ref), 120);
+    }, 'Đang gộp bản vá cảnh lỗi và kiểm tra tham chiếu…');
 
   const pick = async (index) =>
     act(
@@ -1552,37 +1599,79 @@ function MangaStoryPanel({ projectId, onUpdated }) {
                           flexWrap: 'wrap',
                         },
                         children: [
-                          e.jsxs('label', {
-                            className: 'manga-btn manga-btn-soft',
-                            style: { margin: 0 },
+                          e.jsxs('div', {
+                            style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
                             children: [
-                              'Import TXT ',
-                              e.jsx('input', {
-                                'aria-label': 'Import TXT Manga',
-                                type: 'file',
-                                accept: '.txt',
-                                style: { display: 'none' },
-                                onChange: (ev) => {
-                                  const file = ev.target.files?.[0];
-                                  if (file)
-                                    act(async () => {
-                                      if (file.size > 1000000) throw Error('TXT quá lớn.');
-                                      const text = await file.text();
-                                      edit({ text });
-                                      const count = text
-                                        .split(/\r?\n/)
-                                        .filter((l) => l.trim()).length;
-                                      setMessage(
-                                        'Đã nạp ' +
-                                          count +
-                                          ' dòng cảnh từ ' +
-                                          file.name +
-                                          '. Bấm Kiểm tra cảnh để xem tham chiếu.'
-                                      );
-                                    }, 'Đang đọc file TXT…');
-                                  ev.target.value = '';
-                                },
+                              e.jsxs('label', {
+                                className: 'manga-btn manga-btn-soft',
+                                style: { margin: 0 },
+                                children: [
+                                  'Import TXT ',
+                                  e.jsx('input', {
+                                    'aria-label': 'Import TXT Manga',
+                                    type: 'file',
+                                    accept: '.txt',
+                                    style: { display: 'none' },
+                                    onChange: (ev) => {
+                                      const file = ev.target.files?.[0];
+                                      if (file)
+                                        act(async () => {
+                                          if (file.size > 1000000) throw Error('TXT quá lớn.');
+                                          const text = await file.text();
+                                          edit({ text });
+                                          setPatchedIds([]);
+                                          setPatchNotes({});
+                                          const count = text
+                                            .split(/\r?\n/)
+                                            .filter((l) => l.trim() && !l.trim().startsWith('#')).length;
+                                          setMessage(
+                                            'Đã nạp ' +
+                                              count +
+                                              ' dòng cảnh từ ' +
+                                              file.name +
+                                              '. Bấm Kiểm tra cảnh để xem tham chiếu.'
+                                          );
+                                        }, 'Đang đọc file TXT…');
+                                      ev.target.value = '';
+                                    },
+                                  }),
+                                ],
                               }),
+                              e.jsxs('label', {
+                                className: 'manga-btn manga-btn-accent',
+                                style: { margin: 0 },
+                                title:
+                                  'Chọn file báo cáo sửa cảnh lỗi (.txt hoặc .json) để chỉ cập nhật các cảnh lỗi và tự động tích chọn tạo lại',
+                                children: [
+                                  '🩹 Nhập file sửa cảnh lỗi (.txt/.json)',
+                                  e.jsx('input', {
+                                    'aria-label': 'Nhập file sửa cảnh lỗi Manga',
+                                    type: 'file',
+                                    accept: '.txt,.json,text/plain,application/json',
+                                    style: { display: 'none' },
+                                    onChange: (ev) => {
+                                      const file = ev.target.files?.[0];
+                                      if (file) {
+                                        void (async () => {
+                                          if (file.size > 1000000) {
+                                            setError('File bản vá quá lớn (tối đa 1 MB).');
+                                            return;
+                                          }
+                                          const raw = await file.text();
+                                          await applyPromptPatch(raw, file.name);
+                                        })();
+                                      }
+                                      ev.target.value = '';
+                                    },
+                                  }),
+                                ],
+                              }),
+                              btn(
+                                patchOpen ? 'Đóng khung dán bản vá' : '📋 Dán bản vá cảnh lỗi',
+                                () => setPatchOpen((v) => !v),
+                                active,
+                                'soft'
+                              ),
                             ],
                           }),
                           e.jsxs('div', {
@@ -1635,6 +1724,56 @@ function MangaStoryPanel({ projectId, onUpdated }) {
                           }),
                         ],
                       }),
+
+                      patchOpen &&
+                        e.jsxs('div', {
+                          style: {
+                            marginTop: 8,
+                            padding: 10,
+                            borderRadius: 8,
+                            background: '#fffbeb',
+                            border: '1px solid #fcd34d',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 8,
+                          },
+                          children: [
+                            e.jsx('span', {
+                              style: { fontSize: 12, fontWeight: 600, color: '#92400e' },
+                              children:
+                                'Dán các dòng cảnh lỗi cần sửa (hỗ trợ chú thích # phía trên mỗi mã UTxxx_x | prompt):',
+                            }),
+                            e.jsx('textarea', {
+                              'aria-label': 'Nội dung bản vá cảnh lỗi Manga',
+                              className: 'manga-field',
+                              rows: 5,
+                              value: patchTextInput,
+                              placeholder:
+                                '# Lỗi lệch nhân vật cảnh UT012_C\nUT012_C | @HARUKO_HOME ngồi uống trà tại bàn gỗ...',
+                              onChange: (ev) => setPatchTextInput(ev.target.value),
+                            }),
+                            e.jsxs('div', {
+                              style: { display: 'flex', gap: 8, justifyContent: 'flex-end' },
+                              children: [
+                                btn(
+                                  'Hủy',
+                                  () => {
+                                    setPatchOpen(false);
+                                    setPatchTextInput('');
+                                  },
+                                  active,
+                                  'ghost'
+                                ),
+                                btn(
+                                  'Áp dụng bản vá & Chọn cảnh lỗi',
+                                  () => applyPromptPatch(patchTextInput, 'khung dán trực tiếp'),
+                                  active || !patchTextInput.trim(),
+                                  'primary'
+                                ),
+                              ],
+                            }),
+                          ],
+                        }),
                     ],
                   }),
 
@@ -1653,18 +1792,45 @@ function MangaStoryPanel({ projectId, onUpdated }) {
                             flexWrap: 'wrap',
                           },
                           children: [
-                            e.jsx('strong', {
-                              className: 'manga-section-title',
-                              children:
-                                '4 · Kiểm tra và chọn cảnh (' +
-                                selected.length +
-                                '/' +
-                                preview.length +
-                                ')',
+                            e.jsxs('div', {
+                              style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+                              children: [
+                                e.jsx('strong', {
+                                  className: 'manga-section-title',
+                                  children:
+                                    '4 · Kiểm tra và chọn cảnh (' +
+                                    selected.length +
+                                    '/' +
+                                    preview.length +
+                                    ')',
+                                }),
+                                patchedIds.length > 0 &&
+                                  e.jsx('span', {
+                                    className: 'manga-badge manga-badge-warn',
+                                    children: '🩹 Đã vá ' + patchedIds.length + ' cảnh lỗi',
+                                  }),
+                              ],
                             }),
                             e.jsxs('div', {
-                              style: { display: 'flex', gap: 6 },
+                              style: { display: 'flex', gap: 6, flexWrap: 'wrap' },
                               children: [
+                                patchedIds.length > 0 &&
+                                  btn(
+                                    '🩹 Chọn riêng cảnh vừa vá (' + patchedIds.length + ')',
+                                    () =>
+                                      setSelected(
+                                        preview
+                                          .filter(
+                                            (r) =>
+                                              r.ready &&
+                                              !r.error &&
+                                              patchedIds.includes(r.scene.scene_id)
+                                          )
+                                          .map((r) => r.scene.scene_id)
+                                      ),
+                                    active,
+                                    'accent'
+                                  ),
                                 btn(
                                   'Chọn cảnh hợp lệ',
                                   () =>
@@ -1689,14 +1855,28 @@ function MangaStoryPanel({ projectId, onUpdated }) {
                             overflowY: 'auto',
                             paddingRight: 4,
                           },
-                          children: preview.map((row) =>
-                            e.jsxs(
+                          children: preview.map((row) => {
+                            const isPatched = patchedIds.includes(row.scene.scene_id);
+                            const qaNote = patchNotes[row.scene.scene_id];
+                            const hasWarnings = Array.isArray(row.warnings) && row.warnings.length > 0;
+                            return e.jsxs(
                               'div',
                               {
                                 style: {
                                   border:
-                                    '1px solid ' + (row.error ? '#fecaca' : '#e2e8f0'),
-                                  background: row.error ? '#fef2f2' : '#f8fafc',
+                                    '1px solid ' +
+                                    (row.error
+                                      ? '#fecaca'
+                                      : isPatched
+                                        ? '#6ee7b7'
+                                        : hasWarnings
+                                          ? '#fde68a'
+                                          : '#e2e8f0'),
+                                  background: row.error
+                                    ? '#fef2f2'
+                                    : isPatched
+                                      ? '#ecfdf5'
+                                      : '#f8fafc',
                                   borderRadius: 8,
                                   padding: '8px 12px',
                                 },
@@ -1709,6 +1889,7 @@ function MangaStoryPanel({ projectId, onUpdated }) {
                                       fontWeight: 600,
                                       fontSize: 13,
                                       cursor: 'pointer',
+                                      flexWrap: 'wrap',
                                     },
                                     children: [
                                       e.jsx('input', {
@@ -1722,9 +1903,24 @@ function MangaStoryPanel({ projectId, onUpdated }) {
                                               : s.filter((id) => id !== row.scene.scene_id)
                                           ),
                                       }),
+                                      isPatched &&
+                                        e.jsx('span', {
+                                          className: 'manga-badge manga-badge-ok',
+                                          children: '🩹 Vừa vá lỗi',
+                                        }),
                                       row.scene.scene_id + ' · ' + row.scene.prompt_en,
                                     ],
                                   }),
+                                  qaNote &&
+                                    e.jsx('p', {
+                                      style: {
+                                        fontSize: 11.5,
+                                        color: '#065f46',
+                                        margin: '4px 0 0',
+                                        fontStyle: 'italic',
+                                      },
+                                      children: 'Ghi chú QA: ' + qaNote,
+                                    }),
                                   e.jsx('p', {
                                     style: {
                                       fontSize: 12,
@@ -1738,6 +1934,25 @@ function MangaStoryPanel({ projectId, onUpdated }) {
                                           .map((img) => img.characterId || 'Style')
                                           .join(' → ') || 'Không có'),
                                   }),
+                                  hasWarnings &&
+                                    row.warnings.map((w, wi) =>
+                                      e.jsx(
+                                        'p',
+                                        {
+                                          style: {
+                                            fontSize: 11.5,
+                                            color: '#b45309',
+                                            background: '#fffbeb',
+                                            border: '1px solid #fde68a',
+                                            borderRadius: 6,
+                                            padding: '4px 8px',
+                                            margin: '4px 0',
+                                          },
+                                          children: '⚠ ' + w,
+                                        },
+                                        wi
+                                      )
+                                    ),
                                   e.jsxs('details', {
                                     children: [
                                       e.jsx('summary', {
@@ -1765,8 +1980,8 @@ function MangaStoryPanel({ projectId, onUpdated }) {
                                 ],
                               },
                               row.scene.scene_id
-                            )
-                          ),
+                            );
+                          }),
                         }),
                         e.jsxs('label', {
                           style: {

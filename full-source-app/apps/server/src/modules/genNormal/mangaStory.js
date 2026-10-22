@@ -2,7 +2,7 @@ import path from 'node:path';
 import { mkdir, readFile, writeFile, rename, stat, copyFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { normalizePromptWorkflow } from '../workflow/lib/promptStory.js';
+import { normalizePromptWorkflow, mergePromptPatch } from '../workflow/lib/promptStory.js';
 import { previewStory } from '../workflow/lib/storyScenes.js';
 import { getElectronUserDataPath } from '../../lib/electronPaths.js';
 
@@ -46,6 +46,22 @@ export class MangaStoryStore {
     async write(id,state) { await mkdir(this.dir(id),{recursive:true});const file=path.join(this.dir(id),'state.json');const tmp=file+'.'+randomUUID();await writeFile(tmp,JSON.stringify(state,null,2));await rename(tmp,file); }
     async exclusive(id,fn) { if(this.locks.has(id))throw Error('Đang xử lý bộ ảnh này. Chờ hoàn thành rồi thử lại.');this.locks.add(id);try{return await fn();}finally{this.locks.delete(id);} }
     async save(id,config,revision) { return this.exclusive(id,async()=>{const state=await this.read(id);if(state.revision!==revision)throw Error('Cấu hình đã thay đổi ở cửa sổ khác. Tải lại trước khi lưu.');const parsed=mangaConfigSchema.parse(config);if(new Set(parsed.characters.map(c=>c.id)).size!==parsed.characters.length)throw Error('Trùng mã nhân vật.');for(const asset of [parsed.styleAsset,...parsed.characters.map(c=>c.asset)].filter(Boolean))await stat(this.assetPath(id,asset));state.config=parsed;state.revision++;await this.write(id,state);return state;}); }
+    async patchPrompts(id,{revision,config,patchText,allowAppend=false}) {
+        return this.exclusive(id,async()=>{
+            const state=await this.read(id);
+            if(state.revision!==revision)throw Error('Cấu hình đã thay đổi ở cửa sổ khác. Tải lại trước khi vá lỗi.');
+            const baseConfig=config?mangaConfigSchema.parse(config):state.config;
+            if(new Set(baseConfig.characters.map(c=>c.id)).size!==baseConfig.characters.length)throw Error('Trùng mã nhân vật.');
+            for(const asset of [baseConfig.styleAsset,...baseConfig.characters.map(c=>c.asset)].filter(Boolean))await stat(this.assetPath(id,asset));
+            const merged=mergePromptPatch(baseConfig.text,patchText,{allowAppend});
+            const nextConfig=mangaConfigSchema.parse({...baseConfig,text:merged.text});
+            state.config=nextConfig;
+            state.revision++;
+            await this.write(id,state);
+            const preview=await this.preview(id,state.config);
+            return {revision:state.revision,config:state.config,patchedSceneIds:merged.patchedSceneIds,notes:merged.notes,count:merged.count,rows:preview.rows};
+        });
+    }
     async importAsset(id,file) {
         await this.project(id);if(!path.isAbsolute(file))throw Error('Chọn đường dẫn ảnh tuyệt đối.');
         const ext=path.extname(file).toLowerCase();if(!/^\.(png|jpg|jpeg|webp)$/.test(ext))throw Error('Chọn ảnh PNG, JPG hoặc WebP.');

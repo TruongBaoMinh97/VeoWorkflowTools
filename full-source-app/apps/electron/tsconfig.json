@@ -15,6 +15,7 @@
     "declaration": false
   },
   "include": [
+    "src/main/privateUpdateAuth.ts",
     "src/main/captchaBrowserManager.ts",
     "src/main/captchaFrameMint.ts",
     "src/main/systemBrowserLogin.ts"

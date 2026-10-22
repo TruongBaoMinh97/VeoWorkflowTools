@@ -20,9 +20,23 @@ describe('Renderer source-first Manga Story & Gen Veo3 UI', () => {
     expect(mangaPanelSource).toContain('insertTagAtCursor');
     expect(mangaPanelSource).toContain('Lưu & Đóng');
     expect(mangaPanelSource).toContain('Bỏ thay đổi & Đóng');
+    expect(mangaPanelSource).toContain('applyPromptPatch');
+    expect(mangaPanelSource).toContain('Nhập file sửa cảnh lỗi');
+    expect(mangaPanelSource).toContain('Vừa vá lỗi');
     expect(mangaCssSource).toContain('.manga-modal-dialog');
     expect(mangaCssSource).toContain('.manga-btn-primary');
     expect(mangaCssSource).toContain('.manga-char-grid');
+  });
+
+  it('includes smart multi-batch merge and in-place CapCut draft patch controls in StoryCapcutSync source', async () => {
+    const capcutSyncSource = await readFile(
+      new URL('../../../renderer/src/features/story-workflow/StoryCapcutSync.js', import.meta.url),
+      'utf8'
+    );
+
+    expect(capcutSyncSource).toContain('Gộp thông minh: Lấy ảnh mới nhất mỗi cảnh');
+    expect(capcutSyncSource).toContain('/api/workflow/capcut/patch');
+    expect(capcutSyncSource).toContain('Cập nhật đè ảnh mới vào project CapCut đã có');
   });
 
   it('removes blocking credit alert and hardcoded outputDir block in GenNormalDetailPage source', async () => {

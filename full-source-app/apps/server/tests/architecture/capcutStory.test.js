@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {execFileSync} from 'node:child_process';
-import {readAudioScenes,readVisualTimeline,parseSrtTimeline,pairScenes,pairImagesToSrt,pairImagesToTimeline,resolveCapcutBatchIndex,createCapcutProject} from '../../src/modules/workflow/lib/capcutStory.js';
+import {readAudioScenes,readVisualTimeline,parseSrtTimeline,pairScenes,pairImagesToSrt,pairImagesToTimeline,resolveCapcutBatchIndex,createCapcutProject,patchCapcutProject,collectLatestSceneJobs} from '../../src/modules/workflow/lib/capcutStory.js';
 let root,audio,image,project;
 const ffmpeg=path.resolve('binaries/ffmpeg/win32-x64-ffmpeg.exe'),ffprobe=path.resolve('binaries/ffmpeg/win32-x64-ffprobe.exe');
 beforeAll(async()=>{
@@ -72,6 +72,37 @@ describe('Story CapCut export',()=>{
   const report=JSON.parse(await fs.readFile(path.join(result.path,'story-sync.json'),'utf8'));
   expect(report.visualTimeline).toBe(path.join(story,'visual_timeline.json'));expect(report.images[1].sceneId).toBe('UT002');
  });
+ it('merges partial regenerated scene batches with earlier batches and hot-patches existing CapCut drafts',async()=>{
+  const story=path.join(root,'timeline-merge-story');await fs.mkdir(story);const inputs=path.join(story,'inputs');await fs.mkdir(inputs);
+  const master=path.join(inputs,'audio.wav');execFileSync(ffmpeg,['-v','error','-f','lavfi','-i','sine=frequency=330:sample_rate=48000','-t','1.988',master],{windowsHide:true});
+  await fs.writeFile(path.join(story,'visual_timeline.json'),JSON.stringify({schema_version:'visual-timeline/v1',master_audio:master,audio_duration_ms:1988,scenes:[
+   {scene_id:'UT001',utterance_ids:['UT001'],speaker_id:'NARRATOR',source_text:'Cảnh 1.',start_ms:0,end_ms:731},
+   {scene_id:'UT002',utterance_ids:['UT002'],speaker_id:'KEIKO',source_text:'Cảnh 2.',start_ms:731,end_ms:1988},
+  ]}));
+  const patchedImage=path.join(root,'ảnh-vá.png');execFileSync(ffmpeg,['-v','error','-f','lavfi','-i','color=c=red:s=64x36','-frames:v','1',patchedImage],{windowsHide:true});
+  const multiBatchProject={...project,jobs:[
+   {id:'b0_1',jobIndex:0,batchIndex:0,mode:'IMAGE_GENERATION',status:'COMPLETED',resultUrl:image,prompt:'Manga run r1 / UT001. Do not render this identifier as text.'},
+   {id:'b0_2',jobIndex:1,batchIndex:0,mode:'IMAGE_GENERATION',status:'COMPLETED',resultUrl:image,prompt:'Manga run r1 / UT002. Do not render this identifier as text.'},
+   {id:'b1_2',jobIndex:2,batchIndex:1,mode:'IMAGE_GENERATION',status:'COMPLETED',resultUrl:patchedImage,prompt:'Manga run r2 / UT002. Do not render this identifier as text.'},
+  ]};
+  const timeline=await readVisualTimeline(story);
+  // Selecting partial batch 1 automatically merges with batch 0 for missing scenes
+  expect(pairImagesToTimeline(multiBatchProject,1,timeline.scenes).map(p=>p.job.id)).toEqual(['b0_1','b1_2']);
+  // Selecting 'merged' also picks the latest job per sceneId
+  expect(pairImagesToTimeline(multiBatchProject,'merged',timeline.scenes).map(p=>p.job.id)).toEqual(['b0_1','b1_2']);
+  // Create initial draft from batch 0, then hot-patch it with batch 1
+  const output=path.join(root,'patch-drafts');await fs.mkdir(output);
+  const initialProject={...multiBatchProject,jobs:multiBatchProject.jobs.slice(0,2)};
+  const created=await createCapcutProject({project:initialProject,batchIndex:0,audioFolder:story,alignmentMode:'timeline',draftsRoot:output},{ffprobe,isCapcutRunning:async()=>false});
+  const beforeBytes=await fs.readFile(path.join(created.path,'media','UT002.png'));
+  const patchRes=await patchCapcutProject({project:multiBatchProject,draftPath:created.path,batchIndex:1},{isCapcutRunning:async()=>false});
+  expect(patchRes.patchedCount).toBe(1);
+  expect(patchRes.patchedScenes).toEqual(['UT002']);
+  const afterBytes=await fs.readFile(path.join(created.path,'media','UT002.png'));
+  expect(afterBytes.equals(beforeBytes)).toBe(false);
+  const syncReport=JSON.parse(await fs.readFile(path.join(created.path,'story-sync.json'),'utf8'));
+  expect(syncReport.images.find(img=>img.sceneId==='UT002').jobId).toBe('b1_2');
+ });
  it('blocks failed/missing/extra image jobs and never uses a different batch or edit child',async()=>{
   const scenes=await readAudioScenes(audio);
   expect(()=>pairScenes({...project,jobs:project.jobs.slice(1)},0,scenes)).toThrow('ảnh');
@@ -82,11 +113,12 @@ describe('Story CapCut export',()=>{
  it('does not coerce an empty saved batch selection to batch zero',()=>{
   const withCharacterRuns={...project,jobs:[
    {...project.jobs[0],id:'character',jobIndex:0,batchIndex:0},
-   {...project.jobs[0],id:'scene1',jobIndex:1,batchIndex:3},
-   {...project.jobs[1],id:'scene2',jobIndex:2,batchIndex:3},
+   {...project.jobs[0],id:'scene1',jobIndex:1,batchIndex:3,prompt:'Manga run r1 / SC001. Do not render this identifier as text.'},
+   {...project.jobs[1],id:'scene2',jobIndex:2,batchIndex:3,prompt:'Manga run r1 / SC002. Do not render this identifier as text.'},
   ]};
   expect(resolveCapcutBatchIndex(withCharacterRuns,'')).toBe(3);
   expect(resolveCapcutBatchIndex(withCharacterRuns,0)).toBe(0);
+  expect(resolveCapcutBatchIndex(withCharacterRuns,'merged')).toBe('merged');
   expect(()=>pairScenes(withCharacterRuns,'',[{sceneId:'SC001'},{sceneId:'SC002'}])).toThrow('Chưa có lượt');
  });
  it('uses manifest scene order and rejects duplicate or missing audio numbers without a manifest',async()=>{

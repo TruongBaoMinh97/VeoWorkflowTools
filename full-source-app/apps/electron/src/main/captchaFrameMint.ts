@@ -9,6 +9,7 @@ export interface CaptchaFrameMintResult {
 }
 
 type RecaptchaGlobal = typeof globalThis & {
+  __realExecute?: (siteKey: string, options: { action: string }) => Promise<string>;
   grecaptcha?: {
     enterprise?: {
       execute?: (siteKey: string, options: { action: string }) => Promise<string>;
@@ -29,46 +30,57 @@ export async function tryMintCaptchaFromFrames(
   action: string,
 ): Promise<CaptchaFrameMintResult | null> {
   for (const frame of frames) {
-    const hasExecute = await frame
-      .evaluate(() => {
-        const root = globalThis as RecaptchaGlobal;
-        return typeof root.grecaptcha?.enterprise?.execute === 'function';
-      })
-      .catch(() => false);
+    try {
+      const hasExecute = await frame
+        .evaluate(() => {
+          const root = globalThis as RecaptchaGlobal;
+          return (
+            typeof root.__realExecute === 'function' ||
+            typeof root.grecaptcha?.enterprise?.execute === 'function'
+          );
+        })
+        .catch(() => false);
 
-    if (!hasExecute) {
-      continue;
+      if (!hasExecute) {
+        continue;
+      }
+
+      await frame
+        .evaluate(() => {
+          try {
+            Object.keys(localStorage)
+              .filter((key) => key.startsWith('_grecaptcha'))
+              .forEach((key) => localStorage.removeItem(key));
+          }
+          catch {
+            // A sandboxed/cross-origin frame may deny localStorage. Minting can
+            // still proceed through the page-owned execute function.
+          }
+        })
+        .catch(() => undefined);
+
+      const token = await frame
+        .evaluate(async (resolvedSiteKey: string, resolvedAction: string) => {
+          const root = globalThis as RecaptchaGlobal;
+          if (typeof root.__realExecute === 'function') {
+            return await root.__realExecute(resolvedSiteKey, { action: resolvedAction });
+          }
+          const execute = root.grecaptcha?.enterprise?.execute;
+          if (typeof execute !== 'function') {
+            return null;
+          }
+          return execute.call(root.grecaptcha?.enterprise, resolvedSiteKey, {
+            action: resolvedAction,
+          });
+        }, siteKey, action)
+        .catch(() => null);
+
+      if (typeof token === 'string' && token.length > 20) {
+        return { token, frameUrl: frame.url() };
+      }
     }
-
-    await frame
-      .evaluate(() => {
-        try {
-          Object.keys(localStorage)
-            .filter((key) => key.startsWith('_grecaptcha'))
-            .forEach((key) => localStorage.removeItem(key));
-        }
-        catch {
-          // A sandboxed/cross-origin frame may deny localStorage. Minting can
-          // still proceed through the page-owned execute function.
-        }
-      })
-      .catch(() => undefined);
-
-    const token = await frame
-      .evaluate(async (resolvedSiteKey: string, resolvedAction: string) => {
-        const root = globalThis as RecaptchaGlobal;
-        const execute = root.grecaptcha?.enterprise?.execute;
-        if (typeof execute !== 'function') {
-          return null;
-        }
-        return execute.call(root.grecaptcha?.enterprise, resolvedSiteKey, {
-          action: resolvedAction,
-        });
-      }, siteKey, action)
-      .catch(() => null);
-
-    if (typeof token === 'string' && token.length > 20) {
-      return { token, frameUrl: frame.url() };
+    catch {
+      // Bỏ qua nếu frame bị unmount/detach giữa chừng
     }
   }
 

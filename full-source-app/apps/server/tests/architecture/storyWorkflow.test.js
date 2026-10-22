@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { compileScene, parseStory, previewStory, snapshotStory } from '../../src/modules/workflow/lib/storyScenes.js';
+import { compileScene, parseStory, previewStory, snapshotStory, detectGhostCharacterWarnings } from '../../src/modules/workflow/lib/storyScenes.js';
+import { parsePromptPatch, mergePromptPatch } from '../../src/modules/workflow/lib/promptStory.js';
 import { saveStoryResults, listStoryResults, selectStoryResult } from '../../src/modules/workflow/lib/storyResults.js';
 import { createDefaultNodeExecutorRegistry } from '../../src/modules/workflow/engine/NodeExecutorRegistry.js';
 import { resolveInputs } from '../../src/modules/workflow/workflow.engine.js';
@@ -31,4 +32,37 @@ describe('Story workflow',()=>{
   const bytes=await Promise.all(attempts.map(a=>readFile(path.join(root,'scenes','SC001',a,'01.png'))));expect(bytes.some(b=>b.equals(original))).toBe(true);
  });
  it('exposes story row input without changing existing image/text schema',()=>{const schema=extractBatchSchema(workflow);expect(schema.inputs).toHaveLength(1);expect(schema.inputs[0].storyInput).toBe(true);expect(schema.outputs).toHaveLength(1)});
+ it('merges QA prompt patches (.txt with # comments and .json) while preserving original scene order',()=>{
+  const existing = 'UT001_A | @HARUKO_HOME drinks tea.\nUT002_B | @HARUKO_HOME reads a book.\nUT003_C | @SUMIE_HOME walks outside.';
+  const patchTxt = '# Header comment\n# Fix UT002_B character leak\nUT002_B | @HARUKO_HOME sits alone at the table.';
+  const merged = mergePromptPatch(existing, patchTxt);
+  expect(merged.patchedSceneIds).toEqual(['UT002_B']);
+  expect(merged.count).toBe(1);
+  expect(merged.notes.UT002_B).toContain('Fix UT002_B character leak');
+  expect(merged.text).toBe('UT001_A | @HARUKO_HOME drinks tea.\nUT002_B | @HARUKO_HOME sits alone at the table.\nUT003_C | @SUMIE_HOME walks outside.');
+  const jsonPatch = JSON.stringify({patches:[{scene_id:'UT003_C',reason:'Fix pose',prompt_en:'@SUMIE_HOME stands near the gate.'}]});
+  const mergedJson = mergePromptPatch(merged.text, jsonPatch);
+  expect(mergedJson.patchedSceneIds).toEqual(['UT003_C']);
+  expect(mergedJson.notes.UT003_C).toBe('Fix pose');
+  expect(mergedJson.text).toContain('UT003_C | @SUMIE_HOME stands near the gate.');
+ });
+ it('detects ghost character plain-text name leaks when @ID is missing',()=>{
+  const document = {
+   characters: [
+    {character_id:'HARUKO_HOME',display_name:'Haruko (At Home)',identity_description_en:'64yo woman'},
+    {character_id:'HARUKO_OUT',display_name:'Haruko (Outdoor)',identity_description_en:'64yo woman'},
+    {character_id:'REIKO',display_name:'Reiko',identity_description_en:'65yo woman'},
+   ],
+   scenes: [
+    {scene_id:'UT012_C',visible_character_ids:['HARUKO_HOME'],prompt_en:'@HARUKO_HOME sits across from Reiko at the cafe.'},
+    {scene_id:'UT013_A',visible_character_ids:['HARUKO_OUT'],prompt_en:'@HARUKO_OUT walks while Haruko smiles.'},
+   ],
+  };
+  const warnings1 = detectGhostCharacterWarnings(document, document.scenes[0]);
+  expect(warnings1).toHaveLength(1);
+  expect(warnings1[0]).toMatch(/reiko/i);
+  expect(warnings1[0]).toContain('@REIKO');
+  const warnings2 = detectGhostCharacterWarnings(document, document.scenes[1]);
+  expect(warnings2).toEqual([]);
+ });
 });

@@ -2,7 +2,7 @@
   "kind": "flow-workflow",
   "schemaVersion": 1,
   "name": "ETSY - Váy công chúa trẻ em - Nano Banana Pro",
-  "description": "Mỗi ảnh váy trong folder là một job độc lập. Nano Banana Pro tự nhận diện ảnh sản phẩm trên mannequin, móc treo, flat-lay hoặc ảnh có bé mẫu; khóa nguyên thiết kế, màu sắc, chất liệu, mặt trước/mặt sau và phụ kiện thật; chỉ cải thiện bối cảnh, ánh sáng và xóa đồ họa quảng cáo. Nếu phiên bản có trẻ em bị từ chối bởi kiểm duyệt, workflow tự thử lại đúng một lần dưới dạng ảnh sản phẩm trên mannequin. Tạo đúng 1 ảnh listing vuông 1:1 cho mỗi ảnh nguồn.",
+  "description": "Mỗi ảnh váy trong folder là một job độc lập. Nano Banana Pro tự nhận diện ảnh sản phẩm trên mannequin, móc treo, flat-lay hoặc ảnh có bé mẫu; khóa nguyên thiết kế, màu sắc, chất liệu, mặt trước/mặt sau và phụ kiện thật; chỉ cải thiện bối cảnh, ánh sáng và xóa đồ họa quảng cáo. Tạo đúng 1 ảnh listing vuông 1:1 cho mỗi ảnh nguồn.",
   "viewport": {
     "x": 80,
     "y": 80,
@@ -54,7 +54,7 @@
         "model": "GEM_PIX_2",
         "ratio": "1:1",
         "count": 1,
-        "contentFallback": "mannequin"
+      "contentFallback": "mannequin"
       },
       "label": "03 - Nano Banana Pro tạo ảnh Etsy 1:1",
       "version": 1

@@ -16,7 +16,6 @@ const audioExtensions = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg'
 export function defaultCapcutRoot() {
     return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
 }
-
 export function imageBatches(project) {
     const groups = new Map();
     for (const job of project.jobs || []) if (job.mode === 'IMAGE_GENERATION' && !job.parentJobId) {
@@ -30,7 +29,36 @@ export function imageBatches(project) {
     }));
 }
 
+export function jobSceneId(job) {
+    const prompt = String(job?.prompt || '');
+    return prompt.match(/^Manga run [^\r\n/]+\s*\/\s*([A-Za-z0-9_-]+)\./)?.[1]
+        || prompt.match(/\bSCENE_ID\s*:\s*([A-Za-z0-9_-]+)/i)?.[1]
+        || null;
+}
+
+export function collectLatestSceneJobs(project, upToBatchIndex = null) {
+    const batches = [...imageBatches(project)].sort((a, b) => a.batchIndex - b.batchIndex);
+    const maxBatch = upToBatchIndex !== '' && upToBatchIndex != null && upToBatchIndex !== 'merged' ? Number(upToBatchIndex) : null;
+    const bySceneId = new Map();
+    for (const batch of batches) {
+        if (maxBatch != null && Number.isInteger(maxBatch) && batch.batchIndex > maxBatch) continue;
+        for (const job of batch.jobs) {
+            if (job.status !== 'COMPLETED' || !job.resultUrl) continue;
+            const sceneId = jobSceneId(job);
+            if (!sceneId || /^CHAR_/i.test(sceneId)) continue;
+            bySceneId.set(sceneId, { job, batchIndex: batch.batchIndex });
+        }
+    }
+    return bySceneId;
+}
+
 export function resolveCapcutBatchIndex(project, requestedBatchIndex) {
+    if (requestedBatchIndex === 'merged') {
+        if (!collectLatestSceneJobs(project).size) {
+            throw Error('Chưa có ảnh gắn mã cảnh (UT/SC) hoàn tất để gộp tự động.');
+        }
+        return 'merged';
+    }
     const batches = imageBatches(project);
     const hasExplicitSelection = requestedBatchIndex !== '' && requestedBatchIndex != null;
     if (hasExplicitSelection) {
@@ -139,18 +167,36 @@ export function pairScenes(project, batchIndex, scenes) {
 }
 
 export function pairImagesToSrt(project, batchIndex, cues) {
+    if (batchIndex === 'merged') {
+        const byId = collectLatestSceneJobs(project);
+        const missing = cues.filter(cue => !byId.has(cue.utteranceId));
+        if (missing.length) throw Error(`Scene ID ảnh gộp chưa đủ cho SRT. Thiếu: ${missing.map(x => x.utteranceId).join(', ')}.`);
+        return cues.map(cue => ({ ...cue, sceneId: cue.utteranceId, job: byId.get(cue.utteranceId).job }));
+    }
     const jobs = getImageJobs(project, batchIndex, cues.length, 'SRT');
     return cues.map((cue, i) => ({ ...cue, sceneId: cue.utteranceId, job: jobs[i] }));
 }
 
-function jobSceneId(job) {
-    const prompt=String(job?.prompt||'');
-    return prompt.match(/^Manga run [^\r\n/]+\s*\/\s*([A-Za-z0-9_-]+)\./)?.[1]
-        ||prompt.match(/\bSCENE_ID\s*:\s*([A-Za-z0-9_-]+)/i)?.[1]
-        ||null;
-}
-
 export function pairImagesToTimeline(project,batchIndex,scenes){
+    if (batchIndex === 'merged') {
+        const byId = collectLatestSceneJobs(project);
+        if (!byId.size) throw Error('Chưa có ảnh gắn mã cảnh (UT/SC) hoàn tất để gộp tự động.');
+        const missing = scenes.filter(scene => !byId.has(scene.sceneId));
+        if (missing.length) throw Error(`Scene ID ảnh gộp chưa đủ cho timeline. Thiếu: ${missing.map(x => x.sceneId).join(', ')}.`);
+        return scenes.map(scene => ({ ...scene, job: byId.get(scene.sceneId).job }));
+    }
+    const selected = batchIndex === '' || batchIndex == null ? Number.NaN : Number(batchIndex);
+    const batch = imageBatches(project).find(b => b.batchIndex === selected);
+    if (batch && batch.jobs.length > 0 && batch.jobs.length < scenes.length) {
+        const allCompleted = batch.jobs.every(j => j.status === 'COMPLETED' && j.resultUrl);
+        const batchTags = batch.jobs.map(job => jobSceneId(job));
+        if (allCompleted && batchTags.every(Boolean)) {
+            const mergedById = collectLatestSceneJobs(project, selected);
+            if (scenes.every(scene => mergedById.has(scene.sceneId))) {
+                return scenes.map(scene => ({ ...scene, job: mergedById.get(scene.sceneId).job }));
+            }
+        }
+    }
     const jobs=getImageJobs(project,batchIndex,scenes.length,'timeline');
     const tagged=jobs.map(job=>jobSceneId(job));
     if(tagged.some(Boolean)&&tagged.some(id=>!id))throw Error('Lượt ảnh chỉ có một phần job mang scene ID; không thể ghép an toàn.');
@@ -388,3 +434,111 @@ export async function createCapcutProject({ project, batchIndex, audioFolder, dr
         throw error;
     }
 }
+
+export async function patchCapcutProject({ project, draftPath, batchIndex = 'merged', sceneIds = null }, deps = {}) {
+    if (!path.isAbsolute(draftPath || '')) throw Error('Chọn đường dẫn tuyệt đối tới thư mục project CapCut cần cập nhật.');
+    const statInfo = await fs.stat(draftPath).catch(() => null);
+    if (!statInfo?.isDirectory()) throw Error('Thư mục project CapCut không tồn tại.');
+    const syncPath = path.join(draftPath, 'story-sync.json');
+    const draftJsonPath = path.join(draftPath, 'draft_content.json');
+    const metaJsonPath = path.join(draftPath, 'draft_meta_info.json');
+    let sync, draft;
+    try {
+        sync = await json(syncPath);
+        draft = await json(draftJsonPath);
+    } catch (error) {
+        throw Error('Thư mục đã chọn không chứa story-sync.json hoặc draft_content.json hợp lệ: ' + error.message);
+    }
+    if (!Array.isArray(sync.images) || !sync.images.length) throw Error('story-sync.json không có danh sách ảnh.');
+    const binary = deps.ffprobe || resolveFfprobeBinary();
+    if (!binary) throw Error('Không tìm thấy FFprobe để kiểm tra ảnh cập nhật.');
+
+    const isExplicitBatch = batchIndex !== 'merged' && batchIndex !== '' && batchIndex != null && Number.isInteger(Number(batchIndex));
+    const latestMap = collectLatestSceneJobs(project, isExplicitBatch ? Number(batchIndex) : null);
+    if (!latestMap.size) throw Error('Chưa có ảnh gắn mã cảnh (UT/SC) hoàn tất để cập nhật.');
+
+    const batchSceneSet = isExplicitBatch
+        ? new Set(
+            (imageBatches(project).find(b => b.batchIndex === Number(batchIndex))?.jobs || [])
+                .filter(j => j.status === 'COMPLETED' && j.resultUrl)
+                .map(j => jobSceneId(j))
+                .filter(Boolean)
+        )
+        : null;
+    const filterSet = Array.isArray(sceneIds) && sceneIds.length ? new Set(sceneIds) : null;
+
+    const targets = sync.images.filter(item => {
+        const entry = latestMap.get(item.sceneId);
+        if (!entry) return false;
+        if (filterSet) return filterSet.has(item.sceneId);
+        if (batchSceneSet && batchSceneSet.size > 0) return batchSceneSet.has(item.sceneId);
+        return entry.job.id !== item.jobId;
+    });
+
+    if (!targets.length) {
+        throw Error('Không tìm thấy cảnh nào có ảnh mới hơn bản nháp CapCut hiện tại.');
+    }
+
+    const mediaDir = path.join(draftPath, 'media');
+    await fs.mkdir(mediaDir, { recursive: true });
+    const patchedSceneIds = [];
+
+    for (const [idx, item] of targets.entries()) {
+        const { job } = latestMap.get(item.sceneId);
+        deps.progress?.(`Đang cập nhật ảnh ${idx + 1}/${targets.length} · ${item.sceneId}`, idx / targets.length);
+        const tmpFile = path.join(mediaDir, `.patch-${item.sceneId}-${randomUUID()}.tmp`);
+        try {
+            const source = job.resultUrl;
+            if (/^https?:\/\//i.test(source)) {
+                const download = deps.download || ((url, file) => import('../../../utils/fileDownloader.js').then(m => m.downloadFile(url, file)));
+                await download(source, tmpFile);
+            } else {
+                await fs.copyFile(source.startsWith('file:') ? fileURLToPath(source) : source, tmpFile);
+            }
+            const info = await probe(tmpFile, 'video', binary);
+            const oldFileName = path.basename(item.imageFile || `${item.sceneId}${info.extension}`);
+            const newFileName = `${item.sceneId}${info.extension}`;
+            const finalFile = path.join(mediaDir, newFileName);
+            await fs.rename(tmpFile, finalFile);
+            if (oldFileName !== newFileName) {
+                await fs.rm(path.join(mediaDir, oldFileName), { force: true }).catch(() => {});
+            }
+            const videoMats = draft.materials?.videos || [];
+            const mat = videoMats.find(m => m.material_name === oldFileName || path.basename(String(m.path || '')) === oldFileName || path.basename(String(m.path || ''), path.extname(String(m.path || ''))) === item.sceneId);
+            if (mat) {
+                mat.path = slash(finalFile);
+                mat.material_name = newFileName;
+                mat.width = info.width;
+                mat.height = info.height;
+            }
+            item.jobId = job.id;
+            item.imageFile = finalFile;
+            item.patchedAt = new Date().toISOString();
+            patchedSceneIds.push(item.sceneId);
+        } finally {
+            await fs.rm(tmpFile, { force: true }).catch(() => {});
+        }
+    }
+
+    draft.update_time = Math.floor(Date.now() / 1000);
+    await fs.writeFile(draftJsonPath, JSON.stringify(draft));
+    try {
+        const meta = await json(metaJsonPath);
+        meta.tm_draft_modified = Date.now() * 1000;
+        await fs.writeFile(metaJsonPath, JSON.stringify(meta));
+    } catch {}
+    sync.updatedAt = new Date().toISOString();
+    sync.lastPatchedScenes = patchedSceneIds;
+    await fs.writeFile(syncPath, JSON.stringify(sync, null, 2));
+
+    return {
+        path: draftPath,
+        name: path.basename(draftPath),
+        patchedCount: patchedSceneIds.length,
+        patchedSceneIds,
+        patchedScenes: patchedSceneIds,
+        count: sync.images.length,
+        durationSeconds: (draft.duration || 0) / 1e6,
+    };
+}
+

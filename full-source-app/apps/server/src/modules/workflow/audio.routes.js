@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { createCapcutProject, defaultCapcutRoot, imageBatches, resolveCapcutBatchIndex } from './lib/capcutStory.js';
+import { createCapcutProject, patchCapcutProject, collectLatestSceneJobs, defaultCapcutRoot, imageBatches, resolveCapcutBatchIndex } from './lib/capcutStory.js';
 import { configureInlineStory, readInlineStoryResult } from './lib/inlineStoryPrompts.js';
 import { genNormalService } from '../genNormal/genNormal.service.js';
 import { genNormalRepository } from '../genNormal/genNormal.repository.js';
@@ -64,7 +64,8 @@ export async function registerAudioRoutes(app){
         if(!project)throw Error('Project không tồn tại.');
         let audioFolder='';
         if(project.outputDir){try{const transfer=JSON.parse(await readFile(path.join(project.outputDir,'gen-normal-transfer.json'),'utf8'));if(transfer.projectId===project.id)audioFolder=project.outputDir;}catch{}}
-        return {audioFolder,draftsRoot:defaultCapcutRoot(),batches:imageBatches(project).map(b=>({batchIndex:b.batchIndex,count:b.jobs.length,completed:b.jobs.filter(j=>j.status==='COMPLETED'&&j.resultUrl).length}))};
+        const mergedJobs=collectLatestSceneJobs(project);
+        return {audioFolder,draftsRoot:defaultCapcutRoot(),mergedSceneCount:mergedJobs.size,batches:imageBatches(project).map(b=>({batchIndex:b.batchIndex,count:b.jobs.length,completed:b.jobs.filter(j=>j.status==='COMPLETED'&&j.resultUrl).length}))};
     }));
     app.post('/api/workflow/capcut/start',handle(async req=>{
         const project=await genNormalRepository.getProject(req.body?.projectId);
@@ -76,6 +77,19 @@ export async function registerAudioRoutes(app){
         const task={id:randomUUID(),projectId:project.id,status:'RUNNING',message:'Đang kiểm tra ảnh và audio…',progress:0,createdAt:Date.now()};
         capcutTasks.set(task.id,task);
         createCapcutProject({...req.body,batchIndex,project},{progress:(message,progress)=>Object.assign(task,{message,progress})})
+            .then(result=>Object.assign(task,{status:'COMPLETED',result,progress:1}))
+            .catch(error=>Object.assign(task,{status:'FAILED',error:error.message}));
+        return task;
+    }));
+    app.post('/api/workflow/capcut/patch',handle(async req=>{
+        const project=await genNormalRepository.getProject(req.body?.projectId);
+        if(!project)throw Error('Project không tồn tại.');
+        const running=[...capcutTasks.values()].find(t=>t.status==='RUNNING');
+        if(running)throw Error('Đang đồng bộ một project CapCut. Vui lòng chờ hoàn tất.');
+        for(const [id,t]of capcutTasks)if(Date.now()-t.createdAt>86400000)capcutTasks.delete(id);
+        const task={id:randomUUID(),projectId:project.id,status:'RUNNING',message:'Đang kiểm tra project CapCut cần cập nhật…',progress:0,createdAt:Date.now()};
+        capcutTasks.set(task.id,task);
+        patchCapcutProject({...req.body,project},{progress:(message,progress)=>Object.assign(task,{message,progress})})
             .then(result=>Object.assign(task,{status:'COMPLETED',result,progress:1}))
             .catch(error=>Object.assign(task,{status:'FAILED',error:error.message}));
         return task;
@@ -112,5 +126,5 @@ export async function registerAudioRoutes(app){
     }));
     app.post('/api/workflow/audio-runs/:runId/gen-normal',handle(req=>transferToGen(req.body?.root,req.params.runId,req.body?.profileIds)));
     app.get('/api/workflow/audio-runs/:runId',handle(req=>audioRuns.get(req.params.runId,req.query.root)));
-    app.post('/api/workflow/audio-runs/:runId/cancel',handle(req=>audioRuns.cancel(req.params.runId,req.body?.root)));
+    app.post('/api/workflow/audio-runs/:runId/cancel',handle(req=>audioRuns.cancel(req.params.runId,req.query.root)));
 }
