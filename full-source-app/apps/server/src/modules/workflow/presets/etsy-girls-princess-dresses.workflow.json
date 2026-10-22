@@ -1,0 +1,102 @@
+{
+  "kind": "flow-workflow",
+  "schemaVersion": 1,
+  "name": "ETSY - Váy công chúa trẻ em - Nano Banana Pro",
+  "description": "Mỗi ảnh váy trong folder là một job độc lập. Nano Banana Pro tự nhận diện ảnh sản phẩm trên mannequin, móc treo, flat-lay hoặc ảnh có bé mẫu; khóa nguyên thiết kế, màu sắc, chất liệu, mặt trước/mặt sau và phụ kiện thật; chỉ cải thiện bối cảnh, ánh sáng và xóa đồ họa quảng cáo. Tạo đúng 1 ảnh listing vuông 1:1 cho mỗi ảnh nguồn.",
+  "viewport": {
+    "x": 80,
+    "y": 80,
+    "zoom": 0.78
+  },
+  "nodes": [
+    {
+      "id": "girls-dress-product",
+      "type": "folder-input",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "referenceRole": "garment",
+        "batchRole": "input",
+        "batchKey": "vay-tre-em",
+        "batchLabel": "Ảnh váy trẻ em - mỗi ảnh một job",
+        "batchOrder": 1,
+        "folderPath": "",
+        "outputDir": "",
+        "groupMode": "files"
+      },
+      "label": "01 - Folder ảnh váy trẻ em",
+      "version": 1
+    },
+    {
+      "id": "girls-dress-master-prompt",
+      "type": "prompt",
+      "position": {
+        "x": 0,
+        "y": 360
+      },
+      "data": {
+        "prompt": "UNIVERSAL MASTER PROMPT — GIRLS' PRINCESS DRESSES\nNano Banana Pro | Etsy Listing Images | Product-Preservation Photography\n\nCURRENT JOB\nCreate exactly one finished, polished, photorealistic square 1:1 Etsy listing photograph from the single current dress reference supplied to this generation. Analyze this reference independently. The current reference is the sole source of truth for the actual product. Preserve the product first, improve the background second, and change a human model only when explicitly required. Never redesign the garment.\n\n1. AUTOMATIC IMAGE-TYPE DETECTION\nBefore editing, identify the current source type.\n- PRODUCT-ONLY: a dress on a mannequin, hanger, stand or flat lay. Preserve the entire product and its physical display arrangement. Replace or improve only the background by default. Do not add a child model and do not reconstruct the garment on a different body or mannequin.\n- HUMAN MODEL: a child wearing the dress. Preserve the original child and garment when the photograph is usable; improve only the background, lighting and unwanted overlays. Do not automatically replace the child. If replacement is explicitly required, use an original age-appropriate child with natural facial features, realistic skin and hair, comfortable posture, modest age-appropriate styling and no doll-like or overly mature appearance.\n- FRONT, BACK, SIDE OR DETAIL VIEW: preserve the exact side, camera angle and visible construction shown in the current image. Never turn a back view into a front view, a front view into a back view, or merge multiple angles into one image.\n\nEach file in the folder is an independent job. Other files may help describe a product family, but no color, bow, flower, sleeve, train, accessory, embellishment or construction detail may be transferred from another image or a previous generation.\n\n2. ABSOLUTE PRODUCT LOCK — HIGHEST PRIORITY\nTreat the visible dress and genuine matching accessories as protected subjects. Preserve exactly:\n- original color and color distribution;\n- silhouette, proportions, fit, scale, orientation and camera perspective;\n- garment length, hemline, neckline, collar, shoulders, straps, sleeves and cuffs;\n- bodice, waistline, seams, openings, closures and skirt volume;\n- number, order, transparency and relative length of all fabric layers;\n- actual fabric type and texture, including satin sheen, tulle or organza transparency, lace structure and sequin reflections;\n- pleats, gathers, ruffles, folds, draping, veils and trains;\n- exact count, shape, size, color, position and orientation of every bow, flower, ribbon, bead, pearl, sequin, embroidery motif, lace panel and applique;\n- genuine crowns, tiaras, gloves, headbands, capes, belts, necklaces or other product-set components visible in the current reference.\n\nImprove the photograph, never the design. Do not redraw, regenerate, reinterpret, beautify, simplify, mirror, rotate, stretch, squeeze, lengthen, shorten, duplicate, remove, reposition or invent garment components. Do not add sleeves, pockets, bows, flowers or extra skirt layers. Do not change the neckline, waistline, material, construction or visible side. If a detail is unclear, preserve only the visible evidence and choose an edit that does not require inventing it.\n\n3. BACKGROUND REPLACEMENT FIRST\nFor product-only references, retain the exact dress, mannequin, hanger or stand and replace only the background whenever possible. Use localized background editing or masking rather than regenerating the protected foreground. Preserve true garment edges, fine straps, sleeves, bows, transparent tulle, lace, veil, train and every skirt layer. Do not cut into the garment or invent missing portions to repair an inaccurate mask. Keep realistic contact shadows, scale, depth and separation.\n\nChoose one refined but restrained environment that suits the current dress: a clean warm-neutral studio, softly lit boutique, elegant European-style room, subtle vintage interior, natural window-lit room or refined neutral product-photography setting. Use believable spatial depth and lighting. Vary the environment across products. If the existing background is already suitable, make only subtle improvements. Avoid fantasy castles, excessive flowers, magical particles, oversized props and distracting decor. The environment must remain secondary.\n\n4. HUMAN MODEL HANDLING\nDo not introduce a child into a product-only image. Do not assume the dress must be worn. When a child is already present, preserve the person's identity, pose and natural appearance unless replacement is explicitly requested. Never use a model change as a reason to alter the dress. Keep hair, hands and pose from hiding the neckline, bodice, waist, skirt structure or defining embellishments. Avoid plastic skin, oversized eyes, artificial symmetry, heavy makeup, excessive smoothing and adult styling.\n\n5. ACCESSORY AND PRODUCT-SET PRESERVATION\nDistinguish real product components from display props and advertising graphics. Preserve genuine accessories exactly where shown unless the task explicitly requests a different arrangement. Do not invent, duplicate, redesign, remove or automatically place accessories on a child. Do not assume every unrelated object in the source is included with the sold item. Printed decorations, embroidery and attached embellishments physically belonging to the dress are protected product details.\n\n6. REMOVE ADVERTISING, NOT PRODUCT DETAILS\nRemove all non-product overlays: Chinese or English promotional text, seller names, watermarks, URLs, prices, banners, borders, stickers, badges, social-media interface elements and decorative typography. Reconstruct only the background behind those overlays. Do not add new text, logos, watermarks, slogans, prices or graphic layouts. Never erase embroidered text, printed fabric designs, sewn decorations or any physical product component.\n\n7. SUBTLE EUROPEAN FAIRYTALE EDITORIAL IDENTITY\nCreate an elegant, refined, romantic and timeless Etsy shop identity through background, light and photographic treatment only. Warm ivory, champagne, cream, muted beige, natural wood and subtle botanical tones may be used in the environment, but never recolor the dress. Do not add crowns, tiaras, gloves, flowers, bows, fairy dust or styling accessories unless they genuinely belong to the current product. Keep fairytale influence subtle and subordinate to product accuracy.\n\n8. CAMERA, COMPOSITION AND SQUARE OUTPUT\nProduce one continuous square 1:1 photograph. Preserve the source orientation and viewpoint. Keep the entire important garment visible with comfortable margins, including sleeves, straps, neckline, skirt layers, hem, veil, train, bows and accessories. For a tall portrait reference, extend or compose the surrounding background to fit the full dress inside the square canvas; never crop, compress or distort the product merely to fill the frame. The dress must remain the immediate focal point and readable at Etsy thumbnail size. No collage, contact sheet, split screen, comparison chart, infographic, mood board, multi-panel layout or image grid.\n\n9. LIGHTING, MATERIAL RENDERING AND PHOTOREALISM\nUse soft directional daylight, natural window light or controlled studio light suited to the current image. Preserve accurate garment color, natural shadows, coherent perspective and the real behavior of each material. Satin needs believable sheen; tulle and organza need true transparency and layered edges; lace, embroidery, beads and sequins need their exact visible patterns and restrained reflections. Avoid artificial glow, excessive HDR, oversaturation, fake bokeh, excessive sharpening, plastic materials, crushed blacks, blown highlights and digitally perfect symmetry. The result must look like an authentic professional photograph, not a 3D render or illustration.\n\n10. FINAL INTERNAL VALIDATION\nBefore producing the image, compare the plan against the current reference and verify internally:\n- the original product remains recognizable and unchanged;\n- color, length, silhouette, fabric, construction and visible orientation are accurate;\n- the exact number and placement of layers, bows, flowers, sequins and genuine accessories are preserved;\n- no detail from another dress or prior job has entered the result;\n- mannequin or child presence follows the current image type;\n- the product remains fully visible, undistorted and dominant in the square frame;\n- background, lighting, shadows and perspective are believable;\n- advertising overlays are removed while physical product details remain;\n- exactly one clean 1:1 Etsy listing photograph is produced without added typography.\n\nPRIORITY ORDER\n1. Preserve the exact product and its front, back, side or detail orientation.\n2. Avoid redesigning or reconstructing the garment.\n3. Keep the entire product clearly visible.\n4. Replace or improve only the background.\n5. Preserve realistic lighting, shadows, material behavior and perspective.\n6. Remove unwanted advertising graphics.\n7. Maintain a subtle European Fairytale Editorial identity.\n\nIf a dramatic edit could compromise product accuracy, choose the minimal edit. If the garment cannot be preserved reliably during a proposed transformation, retain the original product image and limit the edit to the background. Adapt the photography to the current dress, never the dress to the photography. Generate the single final image now."
+      },
+      "label": "02 - Master Prompt váy công chúa",
+      "version": 1
+    },
+    {
+      "id": "generate-girls-dress-listing",
+      "type": "generate-image",
+      "position": {
+        "x": 580,
+        "y": 0
+      },
+      "data": {
+        "imageMode": "image-to-image",
+        "model": "GEM_PIX_2",
+        "ratio": "1:1",
+        "count": 1,
+        "contentFallback": "none"
+      },
+      "label": "03 - Nano Banana Pro tạo ảnh Etsy 1:1",
+      "version": 1
+    },
+    {
+      "id": "girls-dress-result",
+      "type": "result",
+      "position": {
+        "x": 960,
+        "y": 0
+      },
+      "data": {
+        "batchRole": "output",
+        "batchKey": "anh-vay-tre-em-etsy",
+        "batchLabel": "Ảnh váy trẻ em Etsy thành phẩm",
+        "batchOrder": 1
+      },
+      "label": "04 - Kết quả",
+      "version": 1
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-dress-product-to-image",
+      "source": "girls-dress-product",
+      "target": "generate-girls-dress-listing",
+      "sourceHandle": "image-out",
+      "targetHandle": "image-in"
+    },
+    {
+      "id": "e-dress-prompt-to-image",
+      "source": "girls-dress-master-prompt",
+      "target": "generate-girls-dress-listing",
+      "sourceHandle": "text-out",
+      "targetHandle": "text-in"
+    },
+    {
+      "id": "e-dress-image-to-result",
+      "source": "generate-girls-dress-listing",
+      "target": "girls-dress-result",
+      "sourceHandle": "image-out",
+      "targetHandle": "image-in"
+    }
+  ]
+}
