@@ -12,7 +12,7 @@ type UpdaterFeedClient = {
 
 export const feed: UpdateFeed = {
   provider: "github",
-  owner: "TruongBaoMinh",
+  owner: "TruongBaoMinh97",
   repo: "VeoWorkflowTools",
   private: false,
 };
