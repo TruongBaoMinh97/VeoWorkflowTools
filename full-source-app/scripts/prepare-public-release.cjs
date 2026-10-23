@@ -16,11 +16,12 @@ function excluded(file) {
         || /^\.env(?:\.|$)/.test(path.basename(file));
 }
 (async () => {
-    if (fs.existsSync(app) || fs.existsSync(stage)) throw new Error('Release staging already exists; inspect before reusing');
+    const resume = process.argv.includes('--resume');
+    if (!resume && (fs.existsSync(app) || fs.existsSync(stage))) throw new Error('Release staging already exists; inspect before reusing');
     fs.mkdirSync(output, { recursive: true });
-    fs.cpSync(original, app, { recursive: true, filter: file => !excluded(file) });
+    if (!resume) fs.cpSync(original, app, { recursive: true, filter: file => !excluded(file) });
     const archive = path.join(app, 'resources/app.asar');
-    asar.extractAll(archive, stage);
+    if (!resume) asar.extractAll(archive, stage);
     let removed = 0;
     function clean(dir) {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -38,7 +39,7 @@ function excluded(file) {
     fs.cpSync(path.join(source, 'apps/electron/dist'), path.join(stage, 'apps/electron/dist'), { recursive: true });
     await asar.createPackage(stage, archive);
     asar.uncache(archive);
-    const feed = asar.extractFile(archive, 'apps/electron/dist/main/privateUpdateAuth.js').toString();
+    const feed = asar.extractFile(archive, path.join('apps', 'electron', 'dist', 'main', 'privateUpdateAuth.js')).toString();
     if (!feed.includes('TruongBaoMinh97')) throw new Error('Wrong update feed');
     const unsafe = asar.listPackage(archive).filter(p => !p.includes('node_modules') && /\.(db|sqlite|log|db-wal|db-shm)$/.test(p) && !p.endsWith('template.db'));
     if (unsafe.length) throw new Error('Development data remains in archive');
