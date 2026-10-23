@@ -126,8 +126,8 @@ class ProfileCaptchaGuard {
         if (!s)
             return;
         s.failures = 0;
-        s.timestamps = [];
-        s.blockedUntil = 0;
+        // A late success must not erase a concurrent rejection or its cooldown.
+        s.timestamps = s.timestamps.filter(t => Date.now() - t < SLIDING_WINDOW_MS);
         // Không kéo nextSubmitAt về hiện tại: các lane chạy song song đã đặt khe
         // kế tiếp ở đây. Xoá lịch đó sau một lượt thành công sẽ khiến 3–4 request
         // còn lại cùng mint captcha ngay lập tức.

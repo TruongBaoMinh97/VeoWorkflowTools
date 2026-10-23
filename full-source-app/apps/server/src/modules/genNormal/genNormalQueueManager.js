@@ -4721,6 +4721,9 @@ class GenNormalQueueManager {
      * Resume project
      */
     async resumeProject(projectId) {
+        const { profileImageScheduler } = await import('../../lib/profileImageScheduler.js');
+        const project = await prisma.genNormalProject.findUnique({ where: { id: projectId }, include: { profiles: true } });
+        for (const profile of project?.profiles ?? []) profileImageScheduler.resume(profile.profileId);
         logger.info(`[GenNormal] Resuming project: ${projectId}`);
         // Legacy: TOO_MUCH_TRAFFIC nay không còn dừng project (xử lý như 429 → delay/retry), nên job
         // MỚI không mang marker này. Giữ lại để dọn các job CŨ đã bị PAUSE dở từ trước khi đổi hành vi.

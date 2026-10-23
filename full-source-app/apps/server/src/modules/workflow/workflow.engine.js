@@ -611,6 +611,8 @@ export class WorkflowEngine extends EventEmitter {
                             }
                         }
                         catch (err) {
+                            if (err?.code === 'FLOW_VERIFICATION_REQUIRED')
+                                throw new NonRetryableError(err.message);
                             if (isDailyQuotaError(err)) {
                                 logger.warn('[Workflow] quota ngày — dừng riêng node này', {
                                     profile: this.profileId.slice(0, 8),
@@ -953,6 +955,7 @@ export class WorkflowEngine extends EventEmitter {
                     referenceImageMediaIds: isReference && refMediaIds.length > 0 ? refMediaIds : undefined,
                 }));
                 let imageModelMetadata;
+                this.completedImageRequests ??= new Map();
                 const generated = await generateWithMannequinFallback({
                     enabled: data.contentFallback === 'mannequin', images: resolved.imageResults, count,
                     isCancelled: () => this.cancelled,
@@ -964,12 +967,16 @@ export class WorkflowEngine extends EventEmitter {
                             generate: (selectedModel, blocked) => workflowImageQueue.run(this.profileId, count, () => this.cancelled, async (onSubmitFired) => {
                                 await this.checkPauseOrCancel();
                                 if (blocked()) throw new Error('PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED');
+                                const imageRequestKey = JSON.stringify([node.id, projectId, selectedModel, imageAspectRatio, fallbackPrompts ?? prompts]);
+                                if (!this.completedImageRequests.has(imageRequestKey)) this.completedImageRequests.set(imageRequestKey, new Map());
                                 return provider.generateBatchImages({
                                     projectId,
                                     imageModelName: selectedModel,
                                     imageAspectRatio,
                                     prompts: fallbackPrompts ?? prompts,
                                     onSubmitFired,
+                                    isCancelled: () => this.cancelled,
+                                    completedImages: this.completedImageRequests.get(imageRequestKey),
                                 });
                             }, data.batchParallel),
                         });

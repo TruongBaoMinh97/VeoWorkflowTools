@@ -12,6 +12,7 @@ import { saveStoryResults } from './lib/storyResults.js';
  * in the engine; the orchestrator only schedules, polls and downloads.
  */
 import path from 'node:path';
+import { profileImageScheduler } from '../../lib/profileImageScheduler.js';
 import { batchProfileSlots, flowProfileUnavailable } from './lib/profileJobSlots.js';
 import { createHash } from 'node:crypto';
 import { imagePaths } from './lib/imageInputs.js';
@@ -103,6 +104,7 @@ export const workflowBatchOrchestrator = {
         if (missing.length > 0) {
             throw new Error(`Không tìm thấy ${missing.length} profile đã chọn. Hãy cập nhật lại batch trước khi chạy.`);
         }
+        for (const profileId of batch.profileIds) profileImageScheduler.resume(profileId);
         if(batch.status==='PAUSED')await workflowBatchRepository.resetRunningItems(batchId);
         // Reserve the batch (state owns the cancel flag + in-flight run ids) BEFORE
         // going RUNNING so isRunning() is true the instant the pool is dispatched.
@@ -140,6 +142,7 @@ export const workflowBatchOrchestrator = {
             do {
                 await Promise.all(batch.profileIds.map((profileId) => this.runProfileWorker(batch, def, schema, profileId, state, aiCreds)));
                 if (batch.profileIds.every(id => state.blockedProfiles.has(id))) {
+                    if (state.verificationRequired) break;
                     await workflowBatchRepository.failPendingItems(batch.id,
                         '[PROFILE_UNAVAILABLE] Tất cả profile đã dừng nhận job. Kiểm tra tài khoản rồi thử lại.');
                     break;
@@ -267,6 +270,10 @@ export const workflowBatchOrchestrator = {
             }
             if (finished.status === 'FAILED') {
                 let error = finished.error ?? 'Run thất bại';
+                if (String(error).includes('FLOW_VERIFICATION_REQUIRED')) {
+                    state.verificationRequired = true;
+                    state.blockedProfiles.set(profileId, error);
+                }
                 if (flowProfileUnavailable(finished, def)) {
                     state.blockedProfiles ??= new Map();
                     state.blockedProfiles.set(profileId, error);
@@ -353,6 +360,8 @@ export const workflowBatchOrchestrator = {
         let status;
         if (state.cancelled)
             status = 'CANCELLED';
+        else if (state.verificationRequired && counts.pending > 0)
+            status = 'PAUSED';
         else if (counts.pending > 0 || counts.running > 0 || (counts.total > 0 && counts.error + counts.cancelled === counts.total))
             status = 'FAILED';
         else
@@ -416,6 +425,7 @@ export const workflowBatchOrchestrator = {
             throw new Error(`Dòng ${rowIndex + 1} không ở trạng thái lỗi (${item.status})`);
         }
         assertContentReviewRetry(item.error, reviewConfirmed, this.isRunning(batchId));
+        for (const profileId of batch.profileIds) profileImageScheduler.resume(profileId);
         const reset = await workflowBatchRepository.resetItemForRetry(item.id, newInputValues);
         if (!reset) {
             throw new Error(`Dòng ${rowIndex + 1} vừa được gen lại bởi một yêu cầu khác`);
