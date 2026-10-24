@@ -1,7 +1,7 @@
 {
   "name": "veo-workflow-tools-full-desktop",
   "productName": "Veo Workflow Tools",
-  "version": "1.7.15",
+  "version": "1.7.16",
   "description": "Veo Workflow Tools - full-source desktop build",
   "main": "dist/main/main.js",
   "scripts": {
