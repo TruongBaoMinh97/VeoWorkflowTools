@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UpProject Captcha Bridge — Cài đặt</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --fg: #0f172a;
+      --fg-muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #4f46e5;
+      --accent-h: #4338ca;
+      --radius: 8px;
+      --shadow: 0 1px 3px 0 rgb(0 0 0 / .08), 0 1px 2px -1px rgb(0 0 0 / .08);
+      --ok-bg: #dcfce7;
+      --ok-fg: #15803d;
+      --ok-border: #bbf7d0;
+      --fail-bg: #fee2e2;
+      --fail-fg: #b91c1c;
+      --fail-border: #fecaca;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a; --surface: #1e293b; --fg: #f1f5f9; --fg-muted: #94a3b8;
+        --border: #334155; --accent: #818cf8; --accent-h: #a5b4fc;
+        --shadow: 0 1px 3px 0 rgb(0 0 0 / .4);
+        --ok-bg: #14532d; --ok-fg: #86efac; --ok-border: #16a34a;
+        --fail-bg: #450a0a; --fail-fg: #fca5a5; --fail-border: #dc2626;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; line-height: 1.6;
+      background: var(--bg); color: var(--fg);
+      padding: 2.5rem 1rem; min-height: 100vh;
+    }
+    main {
+      max-width: 480px; margin: 0 auto;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 2rem; box-shadow: var(--shadow);
+    }
+    .card-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 1.75rem; }
+    .logo {
+      width: 36px; height: 36px; border-radius: 8px; background: var(--accent);
+      display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0;
+    }
+    h1 { font-size: 1.125rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; }
+    .subtitle { color: var(--fg-muted); font-size: 13px; margin-top: 2px; }
+    .section-label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--fg-muted); margin-bottom: 0.875rem;
+    }
+    hr { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+    .field { margin-bottom: 1rem; }
+    label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--fg); }
+    input[type="url"], input[type="password"], input[type="text"] {
+      display: block; width: 100%; padding: 8px 12px;
+      font-size: 14px; font-family: inherit; color: var(--fg);
+      background: var(--bg); border: 1.5px solid var(--border);
+      border-radius: var(--radius); outline: none; transition: border-color 150ms ease;
+    }
+    input:focus { border-color: var(--accent); }
+    input::placeholder { color: var(--fg-muted); opacity: 0.7; }
+    .input-group { display: flex; gap: 8px; align-items: stretch; }
+    .input-group input { flex: 1; min-width: 0; }
+    .eye-btn {
+      padding: 0 12px; background: var(--bg); border: 1.5px solid var(--border);
+      border-radius: var(--radius); cursor: pointer; color: var(--fg-muted);
+      font-size: 15px; line-height: 1; transition: border-color 150ms, color 150ms;
+      display: flex; align-items: center; flex-shrink: 0;
+    }
+    .eye-btn:hover { border-color: var(--accent); color: var(--fg); }
+    .eye-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn-row { display: flex; gap: 8px; margin-top: 1.25rem; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 8px 16px; border-radius: var(--radius); font-size: 14px; font-weight: 500;
+      font-family: inherit; cursor: pointer;
+      transition: background 150ms ease, border-color 150ms ease, opacity 150ms;
+      border: 1.5px solid transparent;
+    }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-h); border-color: var(--accent-h); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-secondary { background: transparent; color: var(--fg); border-color: var(--border); }
+    .btn-secondary:hover:not(:disabled) { border-color: var(--accent); }
+    .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-ghost { background: transparent; color: var(--fg-muted); border-color: var(--border); width: 100%; }
+    .btn-ghost:hover { color: var(--fg); border-color: var(--accent); }
+    .test-result {
+      margin-top: 10px; padding: 8px 12px; border-radius: var(--radius);
+      font-size: 13px; font-family: 'Menlo', 'Consolas', 'Courier New', monospace; word-break: break-all;
+    }
+    .test-result[hidden] { display: none; }
+    .test-ok { background: var(--ok-bg); color: var(--ok-fg); border: 1px solid var(--ok-border); }
+    .test-fail { background: var(--fail-bg); color: var(--fail-fg); border: 1px solid var(--fail-border); }
+    .status-list { display: grid; gap: 0; }
+    .status-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 0; border-bottom: 1px solid var(--border);
+    }
+    .status-row:last-child { border-bottom: none; }
+    dt { font-size: 13px; color: var(--fg-muted); }
+    dd { font-size: 13px; font-weight: 500; font-family: 'Menlo', 'Consolas', 'Courier New', monospace; color: var(--fg); }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card-header">
+      <div class="logo" aria-hidden="true">🔑</div>
+      <div>
+        <h1>UpProject Captcha Bridge</h1>
+        <p class="subtitle">Cài đặt kết nối tới backend cục bộ.</p>
+      </div>
+    </div>
+
+    <form id="config-form" novalidate>
+      <p class="section-label">Cấu hình kết nối</p>
+
+      <div class="field">
+        <label for="bridge-url">Bridge URL</label>
+        <input type="url" id="bridge-url" name="bridge-url"
+               placeholder="http://127.0.0.1:4000" autocomplete="off" spellcheck="false" />
+      </div>
+
+      <div class="field">
+        <label for="bridge-secret">Bridge Secret</label>
+        <div class="input-group">
+          <input type="password" id="bridge-secret" name="bridge-secret"
+                 placeholder="••••••••" autocomplete="off" spellcheck="false" />
+          <button type="button" id="toggle-secret" class="eye-btn" aria-label="Hiện secret">
+            <span aria-hidden="true" id="eye-icon">👁</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button type="submit" id="save-btn" class="btn btn-primary" disabled>Lưu cấu hình</button>
+        <button type="button" id="test-btn" class="btn btn-secondary">Test kết nối</button>
+      </div>
+
+      <div id="test-result" class="test-result" hidden aria-live="polite"></div>
+    </form>
+
+    <hr />
+
+    <p class="section-label">Trạng thái</p>
+    <dl class="status-list">
+      <div class="status-row"><dt>Lần poll cuối</dt><dd id="last-poll">—</dd></div>
+      <div class="status-row"><dt>Lần mint cuối</dt><dd id="last-mint">—</dd></div>
+      <div class="status-row"><dt>Thời gian mint cuối</dt><dd id="last-mint-duration">—</dd></div>
+    </dl>
+
+    <hr />
+
+    <button type="button" id="open-flow-btn" class="btn btn-ghost">🎬 &nbsp;Mở Flow AI</button>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

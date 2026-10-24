@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": "src/main",
+    "outDir": "dist/main",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "sourceMap": false,
+    "declaration": false
+  },
+  "include": [
+    "src/main/privateUpdateAuth.ts",
+    "src/main/captchaBrowserManager.ts",
+    "src/main/captchaFrameMint.ts",
+    "src/main/systemBrowserLogin.ts"
+  ]
+}

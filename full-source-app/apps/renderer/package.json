@@ -1,0 +1,12 @@
+{
+  "name": "@veo-workflow/renderer",
+  "version": "1.7.16",
+  "private": true,
+  "type": "module",
+  "description": "Renderer UI source for Veo Workflow Tools",
+  "scripts": {
+    "dev": "node scripts/build.mjs --watch",
+    "build": "node scripts/build.mjs",
+    "typecheck": "node scripts/typecheck.mjs"
+  }
+}

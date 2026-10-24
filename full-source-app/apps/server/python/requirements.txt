@@ -1,0 +1,32 @@
+# Video Analyzer Python Dependencies
+# These are auto-installed on first run (Windows) or via setup-venv.sh (macOS/Linux)
+
+# Video processing
+pydub==0.25.1             # Local TXT/SRT audio splitter
+yt-dlp>=2023.10.13         # YouTube download
+scenedetect>=0.6.2            # Scene detection (cv2 provided by opencv-contrib below)
+opencv-contrib-python>=4.8.0,<5  # Video + image processing; adds cv2.xphoto (FSR) for watermark removal
+
+# Image processing
+pillow>=10.0.0             # Image manipulation
+numpy>=1.24.0              # Numerical computing
+
+# TTS (Text-to-Speech)
+edge-tts>=6.1.0            # Microsoft Edge TTS (free, no API key)
+
+# API & Utils
+requests>=2.31.0           # HTTP requests
+google-genai>=0.4.0        # Google Gemini API
+
+# ═══════════════════════════════════════════════════════════════════════
+# OPTIONAL: Whisper transcription for the Doodle Video Pipeline (~1-2GB)
+# ═══════════════════════════════════════════════════════════════════════
+# faster-whisper (CTranslate2, CPU INT8) — lighter than whisperx, returns
+# {start,end,text} segments. Installed on demand via the "Cài Whisper" button
+# (POST /api/doodle-video/install-whisper) or manually:
+#
+#   pip install faster-whisper
+#
+# The transcription model ("small" by default) auto-downloads on first use.
+# faster-whisper>=1.0.0
+# ═══════════════════════════════════════════════════════════════════════

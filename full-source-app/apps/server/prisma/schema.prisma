@@ -1,0 +1,556 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "darwin", "darwin-arm64", "windows", "linux-musl"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model ProxySettings {
+  id                      Int       @id @default(1)
+  enabled                 Boolean   @default(false)
+  providerType            String    @default("proxyxoay")
+  apiKey                  String?
+  nhamang                 String    @default("random")
+  tinhthanh               String    @default("0")
+  whitelist               String?
+  autoRotate              Boolean   @default(true)
+  rotationIntervalMinutes Int       @default(0) // 0=tắt, 1,2,3,4,5,10,15 = phút giữa mỗi lần xoay
+  forbiddenThreshold      Int       @default(3) // số lần 403 trước khi auto-xoay (1-10)
+  rotateOnProxyError      Boolean   @default(true) // tự xoay khi proxy lỗi kết nối
+  currentHttp             String?
+  currentSocks5           String?
+  currentExpiresAt        DateTime?
+  lastFetchAt             DateTime?
+  lastRotateError         String?
+  updatedAt               DateTime  @updatedAt
+}
+
+model User {
+  id           String            @id @default(cuid())
+  email        String            @unique
+  name         String?
+  avatar       String?
+  googleId     String?           @unique
+  role         UserRole          @default(USER)
+  active       Boolean           @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  licenses     License[]
+  sessions     Session[]
+  activityLogs UserActivityLog[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  refreshToken String?  @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model License {
+  id              String              @id @default(cuid())
+  userId          String?
+  licenseKey      String              @unique
+  type            LicenseType         @default(STANDARD)
+  status          LicenseStatus       @default(INACTIVE)
+  machineId       String?
+  activatedAt     DateTime?
+  expiresAt       DateTime?
+  maxActivations  Int                 @default(1)
+  activationCount Int                 @default(0)
+  features        Json?
+  metadata        Json?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  user            User?               @relation(fields: [userId], references: [id])
+  activations     LicenseActivation[]
+
+  @@index([userId])
+  @@index([licenseKey])
+  @@index([machineId])
+}
+
+model LicenseActivation {
+  id            String    @id @default(cuid())
+  licenseId     String
+  machineId     String
+  machineName   String?
+  ipAddress     String?
+  activatedAt   DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  deactivatedAt DateTime?
+  license       License   @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+
+  @@unique([licenseId, machineId])
+  @@index([licenseId])
+  @@index([machineId])
+}
+
+model UserActivityLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  resource  String?
+  metadata  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Profile {
+  id                    String                    @id @default(cuid())
+  name                  String
+  description           String?
+  accessToken           String?
+  accessTokenExpires    DateTime?
+  // Veo3 account info (fetched from GET /v1/credits, cached for the Profiles tab)
+  paygateTier           String?
+  credits               Int?
+  subscriptionCredits   Int?
+  creditsUpdatedAt      DateTime?
+  // Real expiry of the labs.google NextAuth session (cookie expirationDate or
+  // auth/session `expires`), NOT the ya29 access-token TTL.
+  sessionExpiresAt      DateTime?
+  maxConcurrency        Int                       @default(5)
+  // Veo3 raw concurrent-job ceiling per profile. Veo3 service typically
+  // tolerates 12-15 jobs in flight before throttling. SQLiteQueueManager
+  // honors this cap when acquiring slots for FarmVideo jobs.
+  maxConcurrentVeo3Jobs Int                       @default(12)
+  dailyQuota            Int?
+  runningJobs           Int                       @default(0)
+  active                Boolean                   @default(true)
+  proxyHost             String?
+  proxyPort             Int?
+  proxyUsername         String?
+  proxyPassword         String?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+  apiKeys               ApiKey[]
+  genNormalJobs         GenNormalJob[]
+  genNormalProfiles     GenNormalProjectProfile[]
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  name       String
+  key        String
+  profileId  String?
+  isActive   Boolean   @default(false)
+  usageCount Int       @default(0)
+  lastUsed   DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  profile    Profile?  @relation(fields: [profileId], references: [id])
+
+  @@index([profileId])
+  @@index([isActive])
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  category  String
+  message   String
+  data      Json?
+  createdAt DateTime @default(now())
+}
+
+model GenNormalProject {
+  id                      String                    @id @default(cuid())
+  name                    String
+  status                  String                    @default("READY")
+  paygateTier             String?
+  source                  String                    @default("normal")
+  inputMethod             String                    @default("TEXT")
+  aspectRatio             String                    @default("16:9")
+  outputDir               String                    @default("D:/NOI CHUA VIDEO/1")
+  concurrency             Int                       @default(8)
+  batchSize               Int                       @default(1)
+  delaySeconds            Int                       @default(10)
+  videoModelKey           String?
+  imageModelKey           String?
+  autoDownload            Boolean                   @default(false)
+  autoUpscaleVideo        Boolean                   @default(false)
+  autoUpscaleImage        Boolean                   @default(false)
+  // Download filename template (token-based, e.g. "{mã}_{stt}"). NULL = legacy
+  // "job_{stt}_{ts}" behavior so existing projects are unaffected.
+  fileNamingTemplate      String?
+  // User-selected upscale tier honoured by both manual "Upscale all" and the
+  // auto-upscale poller. Image accepts "2K" | "4K", video accepts
+  // "1080P" | "4K". NULL → falls back to safer default (2K / 1080P).
+  imageUpscaleRes         String?
+  videoUpscaleRes         String?
+  // Per-profile parallel upscale lane count (1..4). NULL → safe default 1.
+  // Higher values speed up batch upscale but raise 403 / memory pressure
+  // (a 4K upsample response is ~11MB). Set via "Cài đặt nâng cao".
+  imageUpscaleConcurrency Int?
+  // Omni Flash family allows 4/6/8/10s output. NULL for Veo 3.1 (locked 8s).
+  videoDurationSeconds    Int?
+  // Công tắc audio (khớp Flow web): true → audioFailurePreference BLOCK_SILENCED_VIDEOS
+  // (audio bị lọc ⇒ Google huỷ luôn video); false → RETURN_SILENCED_VIDEOS (trả video câm,
+  // job vẫn thành công). Default true = bật audio, khớp mặc định của Flow web.
+  // Renderer nhớ lựa chọn gần nhất (localStorage `genNormal:audioEnabled`) và ghi đè cột này
+  // khi mở project, nên cột chủ yếu là kênh truyền giá trị xuống backend lúc submit.
+  audioEnabled            Boolean                   @default(true)
+  totalJobs               Int                       @default(0)
+  completedJobs           Int                       @default(0)
+  failedJobs              Int                       @default(0)
+  processingJobs          Int                       @default(0)
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+  startedAt               DateTime?
+  completedAt             DateTime?
+  jobs                    GenNormalJob[]
+  profiles                GenNormalProjectProfile[]
+  pipelineItems           PipelineItem[]
+
+  @@index([status])
+  @@index([source])
+}
+
+model GenNormalProjectProfile {
+  id            String           @id @default(cuid())
+  projectId     String
+  profileId     String
+  veo3ProjectId String?
+  createdAt     DateTime         @default(now())
+  profile       Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  project       GenNormalProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, profileId])
+  @@index([projectId])
+  @@index([profileId])
+}
+
+model GenNormalJob {
+  id                        String           @id @default(cuid())
+  projectId                 String
+  profileId                 String
+  prompt                    String
+  jobIndex                  Int
+  batchIndex                Int              @default(0) // Batch submission number (0-based); jobs created in the same "Tạo job" click share the same batchIndex
+  mode                      String           @default("TEXT_TO_VIDEO")
+  startImageMediaId         String?
+  endImageMediaId           String?
+  referenceImageMediaIds    Json?
+  startImagePreviewUrl      String?
+  endImagePreviewUrl        String?
+  referenceImagePreviewUrls Json?
+  // Named COMPONENTS refs: Array<{ handle, mediaId }> in mention order. Null for
+  // every other path, which is what keeps the structured-prompt branch inert.
+  referenceImageHandles     Json?
+  audioMediaId              String? // Voice preset id (e.g. "achernar") for REFERENCE_TO_VIDEO_AUDIO mode
+  // Duration snapshot at submit time — only meaningful for Omni Flash (abra_*) keys.
+  videoDurationSeconds      Int?
+  status                    String           @default("DRAFT")
+  progress                  Int              @default(0)
+  providerJobId             String?
+  sceneId                   String?
+  // Veo 3.1 workflow id (returned in submit response `media[].workflowId`).
+  // Required for upsample requests (metadata.workflowId thay cho sceneId).
+  flowWorkflowId            String?
+  veo3ProjectId             String?
+  jobType                   String           @default("VIDEO") // VIDEO or IMAGE
+  availableResolutions      Json? // { "original": "url", "1080p": "url", "2k": "url", "4k": "url" }
+  currentResolution         String?          @default("original") // Current active resolution
+  upsamplingStatus          Json? // { "1080p": "completed", "4k": "processing" }
+  resultUrl                 String?
+  videoBlob                 String?
+  error                     String?
+  retryCount                Int              @default(0)
+  maxRetries                Int              @default(3)
+  upsamplingJobId           String?
+  isUpsampled               Boolean          @default(false)
+  parentJobId               String?
+  // mediaId của bản upscaled (providerJobId của child upscale). Parent giữ
+  // providerJobId GỐC, nên refresh-url cho job isUpsampled phải đọc field này —
+  // thiếu nó link làm mới sẽ trỏ về bản CHƯA upscale.
+  upscaledMediaId           String?
+  // Download tracking (sống qua restart — dedup chính của auto-download).
+  // downloadedAt NULL = chưa từng tải thành công bản resultUrl hiện tại;
+  // poller reset về NULL khi parent nhận resultUrl mới sau upscale.
+  downloadedAt              DateTime?
+  downloadAttempts          Int              @default(0)
+  lastDownloadError         String?
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
+  startedAt                 DateTime?
+  completedAt               DateTime?
+  pipelineItemId            String?
+  profile                   Profile          @relation(fields: [profileId], references: [id])
+  project                   GenNormalProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([profileId])
+  @@index([status])
+  @@index([projectId, jobIndex])
+  @@index([projectId, batchIndex])
+  @@index([pipelineItemId])
+}
+
+model PipelineItem {
+  id        String @id @default(cuid())
+  projectId String
+  itemIndex Int
+
+  // Prompts
+  imagePrompt String @default("")
+  videoPrompt String @default("")
+
+  // State machine: PENDING → IMAGE_GEN → SELECT_IMAGE → VIDEO_GEN → UPSCALE_IMAGE → UPSCALE_VIDEO → DOWNLOAD → COMPLETED | FAILED
+  stage String @default("PENDING")
+
+  // Config per item
+  aspectRatio      String  @default("16:9")
+  videoModelKey    String?
+  imageModelKey    String?
+  autoUpscaleImage Boolean @default(false)
+  imageUpscaleRes  String? // "2K" | "4K"
+  autoUpscaleVideo Boolean @default(false)
+  videoUpscaleRes  String? // "1080P" | "4K"
+  autoPickImage    Boolean @default(false)
+
+  // Character/Scene references (JSON strings)
+  characterImageMediaIds String? // JSON: [{profileId, mediaId, previewUrl}]
+  sceneImageMediaIds     String? // JSON: [{profileId, mediaId, previewUrl}]
+
+  // Job references (link to GenNormalJob)
+  imageGenJobIds     String? // JSON array of GenNormalJob ids
+  selectedImageJobId String? // GenNormalJob.id of picked image
+  videoGenJobId      String? // GenNormalJob.id for IMAGE_TO_VIDEO
+  imageUpscaleJobId  String?
+  videoUpscaleJobId  String?
+
+  // Results
+  selectedImageMediaId String? // mediaId (providerJobId) of picked image
+  finalImageUrl        String?
+  finalVideoUrl        String?
+
+  // Error & retry
+  retryCount         Int     @default(0)
+  maxRetries         Int     @default(3)
+  lastError          String?
+  originalPrompt     String? // prompt before Gemini fix
+  fixedPromptHistory String? // JSON: [{prompt, reason, timestamp}]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project GenNormalProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([stage])
+  @@index([projectId, itemIndex])
+}
+
+model QueueJob {
+  id          String    @id
+  type        String
+  status      String    @default("queued")
+  priority    Int       @default(0)
+  profileId   String?
+  data        String
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  result      String?
+  error       String?
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  workflowId  String?
+  stepId      String?
+
+  @@index([status, priority, createdAt])
+  @@index([profileId, status])
+  @@index([workflowId])
+  @@index([type, status])
+}
+
+model RateLimitLog {
+  id        String   @id @default(cuid())
+  profileId String
+  timestamp DateTime @default(now())
+  cost      Int      @default(1)
+
+  @@index([profileId, timestamp])
+}
+
+model ProfileQuota {
+  profileId   String   @id
+  dailyLimit  Int
+  usedToday   Int      @default(0)
+  lastResetAt DateTime @default(now())
+
+  @@index([lastResetAt])
+}
+
+model Workflow {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  nodes       String          @default("[]")
+  edges       String          @default("[]")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  runs        WorkflowRun[]
+  batches     WorkflowBatch[]
+}
+
+model WorkflowRun {
+  id             String    @id @default(cuid())
+  workflowId     String
+  profileId      String
+  veo3ProjectId  String?
+  status         String    @default("PENDING")
+  nodeStates     String    @default("{}")
+  inputOverrides String?
+  error          String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  workflow       Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId])
+  @@index([profileId])
+  @@index([status])
+}
+
+// Batch Flow — run one workflow template across N input rows. Each row becomes
+// an independent WorkflowRun (its own veo3 project). profileIds drives the
+// multi-profile worker pool; concurrency = number of profiles.
+model WorkflowBatch {
+  id           String              @id @default(cuid())
+  workflowId   String
+  name         String
+  status       String              @default("PENDING") // PENDING|RUNNING|COMPLETED|FAILED|CANCELLED
+  outputDir    String
+  profileIds   String              @default("[]") // JSON array of profileId
+  autoDownload Boolean             @default(true)
+  rowsPerProfile Int               @default(1) // concurrent rows per profile (1-3)
+  error        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  startedAt    DateTime?
+  completedAt  DateTime?
+  items        WorkflowBatchItem[]
+  workflow     Workflow            @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId])
+  @@index([status])
+}
+
+model WorkflowBatchItem {
+  id          String        @id @default(cuid())
+  batchId     String
+  rowIndex    Int
+  profileId   String? // assigned at claim time (shared-queue work-pull)
+  inputValues String        @default("{}") // JSON: { [batchKey]: string }
+  runId       String?
+  status      String        @default("PENDING") // PENDING|RUNNING|DONE|ERROR|CANCELLED
+  retryCount  Int           @default(0)
+  outputPaths String        @default("[]") // JSON array of downloaded file paths
+  error       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+  batch       WorkflowBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([status])
+  @@index([batchId, rowIndex])
+}
+
+// Doodle Video Pipeline — bài viết → kịch bản → audio (TTS ngoài) → Whisper →
+// image prompts → gen ảnh/video (reuse GenNormal) → ghép theo timeline khớp audio.
+// LLM (topic/script/prompt) chạy ở renderer qua Firebase→OpenRouter; model này chỉ
+// lưu artifact + link tới GenNormalProject cho bước gen/ghép.
+model DoodleVideoProject {
+  id                 String   @id @default(cuid())
+  title              String
+  article            String   // bài viết gốc user dán
+  topicOptions       String?  // JSON: [{title,hook,stars}]
+  chosenTopicTitle   String?
+  script             String?  // narration script
+  audioPath          String?  // file audio upload (local abs path)
+  audioDuration      Float?   // giây (ffprobe)
+  whisperSegments    String?  // JSON [{start,end,text}]
+  imagePrompts       String?  // JSON string[] — 1 prompt / segment
+  outputType         String?  // IMAGE | VIDEO
+  seedImageMediaId   String?  // JSON Record<profileId,mediaId> hoặc 1 mediaId (seed nhân vật)
+  genNormalProjectId String?  // link GenNormalProject (gen ảnh/video)
+  outputDir          String?
+  finalVideoPath     String?
+  // v2: style/aspect/language/voice + audio-first mode + in-app TTS params.
+  style              String?  @default("doodle") // doodle | cinematic | anime-ghibli | ...
+  aspectRatio        String?  @default("16:9")   // 16:9 | 9:16
+  language           String?  @default("vi")     // vi|en|ko|ja|zh|fr|es|de
+  voiceStyle         String?  @default("calm")   // calm|energetic|dramatic|storytelling
+  mode               String?  @default("full")   // full | audio-first
+  ttsVoice           String?
+  ttsRate            String?
+  ttsPitch           String?
+  storyStyle         String?  // storytelling preset key or custom free text (injected into doodle.script)
+  audioStyle         String?  // audio/voice persona free text (separate from voiceStyle enum)
+  styleSuffix        String?  // extra visual words appended after the style anchor in imagePrompts
+  customTopicsPrompt String?  // user override for the doodle.topics system prompt (null = builtin)
+  customScriptPrompt String?  // user override for the doodle.script system prompt
+  customImagePrompt  String?  // user override for the doodle.imagePrompts system prompt
+  thumbnailPath      String?  // local path to first generated shot, for gallery cards
+  rawWhisperSegments String?  // original ungrouped Whisper segments (JSON), for re-grouping
+  minShotSeconds     Float?   // shot-grouping floor (null → default 4)
+  maxShotSeconds     Float?   // shot-grouping soft ceiling (null → default 8)
+  cultureStyle       String?  // English culture token for characters (e.g. "Vietnamese"; "" = none)
+  stage              String   @default("DRAFT") // DRAFT|TOPICS|SCRIPT|AUDIO|TRANSCRIBED|PROMPTS_READY|GEN_IN_PROGRESS|GEN_DONE|COMPLETED
+  status             String   @default("IDLE")  // IDLE|RUNNING|COMPLETED|FAILED
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([stage])
+  @@index([genNormalProjectId])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum LicenseType {
+  TRIAL
+  STANDARD
+  PROFESSIONAL
+  ENTERPRISE
+  LIFETIME
+}
+
+enum LicenseStatus {
+  INACTIVE
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  REVOKED
+}

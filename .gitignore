@@ -12,18 +12,31 @@ logs/
 Thumbs.db
 .DS_Store
 
-# Binary/Build artifacts - too large for GitHub
+# Binary/Build artifacts
 *.zip
 *.asar
 full-release/
 full-resources/
-full-source-app/
 desktop-app/
 desktop-extracted/
 release/
 backups/
 asar-check-*/
 source-extracted-*/
+dist-releases/
+server-runtime/
+test-output/
+core-sync/snapshots/
+
+# Source workspace generated content
+full-source-app/node_modules/
+full-source-app/apps/*/node_modules/
+full-source-app/apps/*/dist/
+full-source-app/apps/server/binaries/
+full-source-app/apps/server/logs/
+full-source-app/apps/server/prisma/*.db
+full-source-app/apps/server/prisma/*.db.*
+full-source-app/integrity-manifest.json
 
 # User data
 user-data/

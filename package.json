@@ -1,15 +1,11 @@
 {
   "name": "veo-workflow-tools-full",
-  "version": "1.7.9",
+  "version": "1.7.14",
   "productName": "Veo Workflow Tools",
   "description": "Full-source desktop build for Veo workflow tools",
   "author": "Veo Workflow Tools",
   "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*",
-    "types"
-  ],
+  "workspaces": [],
   "dependencies": {
     "@prisma/client": "^6.19.0",
     "chrome-remote-interface": "^0.33.3",
@@ -23,32 +19,21 @@
     "uuid": "^13.0.0"
   },
   "scripts": {
-    "dev": "bash ./rundev.sh",
-    "dev:server": "npm --prefix apps/server run dev",
-    "dev:renderer": "npm --prefix apps/renderer run dev",
-    "dev:electron": "npm --prefix apps/electron run dev",
-    "build": "npm run build:all",
-    "build:all": "npm run build:server && npm run build:renderer && npm run build:electron",
-    "build:server": "npm --prefix apps/server run build",
-    "build:renderer": "npm --prefix apps/renderer run build",
-    "build:electron": "npm --prefix apps/electron run build",
-    "build:desktop": "npm run build:renderer && npm run build:electron",
-    "build:release": "bash ./build-release.sh",
-    "build:release:win": "bash ./build-release.sh win",
-    "build:release:mac": "bash ./build-release.sh mac",
-    "build:release:all": "bash ./build-release.sh all",
-    "download:python": "npx ts-node scripts/download-python.ts --force",
-    "clean": "rm -rf apps/server/dist apps/renderer/dist apps/electron/dist node_modules/.vite",
-    "clean:client": "rm -rf apps/renderer/.vite apps/renderer/node_modules/.vite apps/renderer/dist apps/electron/dist apps/electron/dist-electron .vite node_modules/.vite",
-    "clean:all": "npm run clean && rm -rf node_modules apps/*/node_modules",
-    "clean:release": "rm -rf release",
-    "install:all": "npm install && npm --prefix apps/server install && npm --prefix apps/renderer install && npm --prefix apps/electron install",
-    "prisma:generate": "npm --prefix apps/server run db:generate",
-    "prisma:migrate": "npm --prefix apps/server run db:migrate",
-    "prisma:studio": "npm --prefix apps/server run prisma:studio",
-    "lint": "echo \"TODO: add lint\" && exit 0",
-    "test": "echo \"TODO: add root test\" && exit 0",
-    "pack:full": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/pack-full-source.ps1"
+    "dev": "npm run dev:server",
+    "dev:server": "npm --prefix full-source-app/apps/server run dev",
+    "dev:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/launch-full-source-dev.ps1",
+    "start:server": "npm --prefix full-source-app/apps/server run start",
+    "typecheck": "npm --prefix full-source-app/apps/server run typecheck && npm --prefix full-source-app/apps/renderer run typecheck",
+    "test": "npm --prefix full-source-app/apps/server run test:architecture",
+    "test:architecture": "npm --prefix full-source-app/apps/server run test:architecture",
+    "test:watch": "npm --prefix full-source-app/apps/server run test:watch",
+    "build": "npm run build:server && npm run build:renderer",
+    "build:server": "npm --prefix full-source-app/apps/server run build",
+    "build:renderer": "npm --prefix full-source-app/apps/renderer run build",
+    "install:source": "npm --prefix full-source-app/apps/server install",
+    "prisma:generate": "npm --prefix full-source-app/apps/server run db:generate",
+    "prisma:migrate": "npm --prefix full-source-app/apps/server run db:migrate",
+    "prisma:studio": "npm --prefix full-source-app/apps/server run prisma:studio"
   },
-  "main": "apps/electron/dist/main/main.js"
+  "main": "full-source-app/main-full.js"
 }

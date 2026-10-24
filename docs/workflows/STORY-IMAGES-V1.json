@@ -1,0 +1,1560 @@
+{
+  "kind": "flow-workflow",
+  "schemaVersion": 1,
+  "name": "STORY — Ảnh truyện đồng nhất nhân vật",
+  "viewport": {
+    "x": 30,
+    "y": 100,
+    "zoom": 0.55
+  },
+  "nodes": [
+    {
+      "id": "story",
+      "type": "story-input",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "document": {
+          "schema_version": "story-prompts/v1",
+          "title": "Chiếc đèn bên suối",
+          "aspect_ratio": "16:9",
+          "characters": [
+            {
+              "character_id": "AN",
+              "display_name": "An",
+              "identity_description_en": "Young girl with short black hair.",
+              "reference_key": "CHAR_AN_DEFAULT",
+              "reference_status": "missing",
+              "outfits": [
+                {
+                  "outfit_id": "AN_DEFAULT",
+                  "description_en": "Yellow jacket, blue cloth shoulder bag, dark trousers and brown shoes."
+                }
+              ],
+              "proposed_details": [
+                "Chi tiết thiết kế bổ sung cho fixture; cần người dùng duyệt."
+              ]
+            },
+            {
+              "character_id": "BAO",
+              "display_name": "Bao",
+              "identity_description_en": "Young boy with curly brown hair.",
+              "reference_key": "CHAR_BAO_DEFAULT",
+              "reference_status": "missing",
+              "outfits": [
+                {
+                  "outfit_id": "BAO_DEFAULT",
+                  "description_en": "Green sweater with pockets, brown trousers and dark shoes."
+                }
+              ],
+              "proposed_details": [
+                "Chi tiết thiết kế bổ sung cho fixture; cần người dùng duyệt."
+              ]
+            },
+            {
+              "character_id": "MIU",
+              "display_name": "Miu",
+              "identity_description_en": "Small golden tabby cat with a white tail tip.",
+              "reference_key": "CHAR_MIU_DEFAULT",
+              "reference_status": "missing",
+              "outfits": [
+                {
+                  "outfit_id": "MIU_DEFAULT",
+                  "description_en": "Natural fur, no clothes or accessories."
+                }
+              ],
+              "proposed_details": [
+                "Chi tiết thiết kế bổ sung cho fixture; cần người dùng duyệt."
+              ]
+            },
+            {
+              "character_id": "ONG_LAM",
+              "display_name": "Mr Lam",
+              "identity_description_en": "Elderly man with silver hair and a kind face.",
+              "reference_key": "CHAR_ONG_LAM_DEFAULT",
+              "reference_status": "missing",
+              "outfits": [
+                {
+                  "outfit_id": "ONG_LAM_DEFAULT",
+                  "description_en": "Brown vest, cream shirt and dark trousers."
+                }
+              ],
+              "proposed_details": [
+                "Chi tiết thiết kế bổ sung cho fixture; cần người dùng duyệt."
+              ]
+            }
+          ],
+          "style": {
+            "style_id": "STORY_STYLE_01",
+            "reference_key": "STYLE_STORY_STYLE_01",
+            "style_prompt_en": "Children's book watercolor illustration, soft outlines, subtle paper texture, gentle warm palette, consistent natural character proportions."
+          },
+          "scenes": [
+            {
+              "scene_id": "SC001",
+              "source_cue_ids": [
+                1
+              ],
+              "start_time": "00:00:00,000",
+              "end_time": "00:00:08,000",
+              "start_ms": 0,
+              "end_ms": 8000,
+              "source_text": "Ở một ngôi làng dưới chân đồi, An sống cùng chú mèo Miu.\nAn có mái tóc đen ngắn, thường mặc áo khoác vàng và mang túi vải xanh.",
+              "visible_character_ids": [
+                "AN",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Wide establishing view. @AN stands outside her village cottage with @MIU at her feet, wooded hills in the distance.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC002",
+              "source_cue_ids": [
+                2
+              ],
+              "start_time": "00:00:08,000",
+              "end_time": "00:00:16,000",
+              "start_ms": 8000,
+              "end_ms": 16000,
+              "source_text": "Chiều hôm ấy, An nhìn thấy một chiếc đèn lồng đỏ trên bậc cửa.\nMiu ngồi cạnh chân cô bé, chăm chú nhìn ngọn đèn chưa được thắp sáng.",
+              "visible_character_ids": [
+                "AN",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium shot. @AN looks down at an unlit red lantern on the doorstep; @MIU sits beside her left foot looking at the lantern. Late afternoon.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC003",
+              "source_cue_ids": [
+                3
+              ],
+              "start_time": "00:00:16,000",
+              "end_time": "00:00:24,000",
+              "start_ms": 16000,
+              "end_ms": 24000,
+              "source_text": "Dưới quai đèn có một mảnh giấy: “Nhờ cháu mang đèn đến cầu gỗ trước khi trời tối.”\nAn nghĩ ngay đến ông Lâm, người vẫn chăm sóc cây cầu của làng.",
+              "visible_character_ids": [
+                "AN"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Close view of @AN reading a small note tied beneath the handle of the red lantern. The paper has no legible writing. No other person is visible.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC004",
+              "source_cue_ids": [
+                4
+              ],
+              "start_time": "00:00:24,000",
+              "end_time": "00:00:32,000",
+              "start_ms": 24000,
+              "end_ms": 32000,
+              "source_text": "An xách chiếc đèn bằng tay phải rồi bước lên con đường ven rừng.\nMiu đi theo bên chân trái của cô bé.",
+              "visible_character_ids": [
+                "AN",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Full shot on the forest path. @AN carries the unlit red lantern in her right hand. @MIU walks by her left foot.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC005",
+              "source_cue_ids": [
+                5
+              ],
+              "start_time": "00:00:32,000",
+              "end_time": "00:00:40,000",
+              "start_ms": 32000,
+              "end_ms": 40000,
+              "source_text": "Phía trước, con đường đất uốn quanh những bụi hoa trắng.\nNắng cuối chiều xuyên qua tán lá, trải những vệt vàng trên lối đi vắng.",
+              "visible_character_ids": [],
+              "outfit_by_character": {},
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Empty winding dirt path among white flowers. Late afternoon sun falls through the trees. No people or animals.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC006",
+              "source_cue_ids": [
+                6
+              ],
+              "start_time": "00:00:40,000",
+              "end_time": "00:00:48,000",
+              "start_ms": 40000,
+              "end_ms": 48000,
+              "source_text": "Đến bên suối, An gặp Bảo, cậu bạn tóc nâu xoăn, mặc áo len xanh và quần nâu.\nBảo đang quỳ trên bờ đá, nhìn chiếc thuyền giấy mắc giữa hai hòn đá dưới nước.",
+              "visible_character_ids": [
+                "AN",
+                "BAO"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Wide shot of the stream bank. @AN stands holding the unlit red lantern. @BAO kneels on the rocky bank looking at a paper boat trapped between two rocks in the water.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC007",
+              "source_cue_ids": [
+                7
+              ],
+              "start_time": "00:00:48,000",
+              "end_time": "00:00:56,000",
+              "start_ms": 48000,
+              "end_ms": 56000,
+              "source_text": "An đặt đèn lồng lên một tảng đá khô, rồi giữ tay Bảo.\nBảo dùng một cành cây dài kéo chiếc thuyền giấy về phía bờ. Miu đứng cạnh chiếc đèn.",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium-wide view. @AN holds @BAO by his free hand. @BAO reaches toward the paper boat using a long branch in his other hand. The unlit red lantern rests on a dry rock; @MIU stands beside it.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC008",
+              "source_cue_ids": [
+                8
+              ],
+              "start_time": "00:00:56,000",
+              "end_time": "00:01:04,000",
+              "start_ms": 56000,
+              "end_ms": 64000,
+              "source_text": "Chiếc thuyền giấy đã được lấy lên, ướt một góc nhưng vẫn còn nguyên.\nBảo cầm thuyền bằng hai tay, mỉm cười với An. Miu ngước nhìn hai bạn.",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium shot. @BAO holds a slightly wet paper boat in both hands and smiles at @AN. @MIU looks up at them. The red lantern remains on the dry rock.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC009",
+              "source_cue_ids": [
+                9
+              ],
+              "start_time": "00:01:04,000",
+              "end_time": "00:01:12,000",
+              "start_ms": 64000,
+              "end_ms": 72000,
+              "source_text": "An xách lại chiếc đèn lồng đỏ. Bảo cất thuyền giấy vào túi áo len.\nHai bạn cùng Miu tiếp tục đi về phía cây cầu gỗ.",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Wide shot of the path toward the wooden bridge. @AN holds the red lantern in her right hand. @BAO walks next to her with the paper boat already tucked in his green sweater pocket. @MIU walks nearby.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC010",
+              "source_cue_ids": [
+                10
+              ],
+              "start_time": "00:01:12,000",
+              "end_time": "00:01:20,000",
+              "start_ms": 72000,
+              "end_ms": 80000,
+              "source_text": "Dưới cầu, dòng suối phản chiếu bầu trời tím nhạt.\nMột chiếc lá vàng trôi qua bóng những thanh gỗ, giữa mặt nước yên tĩnh.",
+              "visible_character_ids": [],
+              "outfit_by_character": {},
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Close view of stream water beneath a wooden bridge. A single yellow leaf drifts across reflections of violet dusk and bridge beams. No people or animals.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC011",
+              "source_cue_ids": [
+                11
+              ],
+              "start_time": "00:01:20,000",
+              "end_time": "00:01:28,000",
+              "start_ms": 80000,
+              "end_ms": 88000,
+              "source_text": "Bảo đứng đợi ở lối vào cầu cùng Miu.\nAn mang đèn đến chỗ ông Lâm, người có mái tóc bạc và chiếc áo ghi lê nâu.",
+              "visible_character_ids": [
+                "AN",
+                "ONG_LAM"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "ONG_LAM": "ONG_LAM_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "ONG_LAM",
+                  "outfit_id": "ONG_LAM_DEFAULT",
+                  "reference_key": "CHAR_ONG_LAM_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium view beside the bridge. @AN approaches @ONG_LAM while carrying the red lantern. The bridge entrance and waiting companions are outside the frame.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC012",
+              "source_cue_ids": [
+                12
+              ],
+              "start_time": "00:01:28,000",
+              "end_time": "00:01:36,000",
+              "start_ms": 88000,
+              "end_ms": 96000,
+              "source_text": "Ông Lâm nhận chiếc đèn từ An, bật công tắc nhỏ rồi treo nó lên móc cạnh cầu.\nÁnh sáng vàng ấm tỏa ra sau lớp vỏ đỏ.",
+              "visible_character_ids": [
+                "AN",
+                "ONG_LAM"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "ONG_LAM": "ONG_LAM_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "ONG_LAM",
+                  "outfit_id": "ONG_LAM_DEFAULT",
+                  "reference_key": "CHAR_ONG_LAM_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium shot. @ONG_LAM hangs the now glowing red lantern on the wooden hook beside the bridge. @AN watches with empty hands. One moment after the switch has been turned on.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC013",
+              "source_cue_ids": [
+                13
+              ],
+              "start_time": "00:01:36,000",
+              "end_time": "00:01:44,000",
+              "start_ms": 96000,
+              "end_ms": 104000,
+              "source_text": "Cận cảnh chiếc đèn lồng đỏ đung đưa trên móc gỗ.\nPhía sau là dòng suối tím xanh; trong khung hình không có người hay con vật.",
+              "visible_character_ids": [],
+              "outfit_by_character": {},
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Close-up of the red lantern glowing warm yellow, hanging on its wooden hook. Blue-violet stream in the background. No people or animals.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC014",
+              "source_cue_ids": [
+                14
+              ],
+              "start_time": "00:01:44,000",
+              "end_time": "00:01:52,000",
+              "start_ms": 104000,
+              "end_ms": 112000,
+              "source_text": "An và Bảo đứng cạnh ông Lâm dưới ánh đèn. Miu ngồi giữa hai bạn nhỏ.\nÔng nói: “Một việc tốt nhỏ cũng có thể soi sáng đường về.”",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU",
+                "ONG_LAM"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT",
+                "ONG_LAM": "ONG_LAM_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "ONG_LAM",
+                  "outfit_id": "ONG_LAM_DEFAULT",
+                  "reference_key": "CHAR_ONG_LAM_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Wide shot under the glowing red lantern. @AN and @BAO stand beside @ONG_LAM. @MIU sits between the children. Calm dusk beside the wooden bridge.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC015",
+              "source_cue_ids": [
+                15
+              ],
+              "start_time": "00:01:52,000",
+              "end_time": "00:02:00,000",
+              "start_ms": 112000,
+              "end_ms": 120000,
+              "source_text": "Trên đường về, An bước cạnh Bảo, còn Miu đi phía trước.\nChiếc đèn vẫn sáng bên cầu, nhỏ dần sau lưng cả ba.",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Rear wide view. @AN and @BAO walk home with @MIU ahead. The glowing red lantern remains hanging beside the distant bridge behind them. An's hands are empty.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            }
+          ]
+        },
+        "selectedSceneIds": [
+          "SC001",
+          "SC007",
+          "SC013",
+          "SC014"
+        ],
+        "outputDir": "",
+        "batchRole": "input",
+        "batchKey": "story",
+        "batchLabel": "Cảnh truyện"
+      },
+      "version": 1
+    },
+    {
+      "id": "refs",
+      "type": "story-references",
+      "position": {
+        "x": 520,
+        "y": 0
+      },
+      "data": {
+        "document": {
+          "schema_version": "story-prompts/v1",
+          "title": "Chiếc đèn bên suối",
+          "aspect_ratio": "16:9",
+          "characters": [
+            {
+              "character_id": "AN",
+              "display_name": "An",
+              "identity_description_en": "Young girl with short black hair.",
+              "reference_key": "CHAR_AN_DEFAULT",
+              "reference_status": "missing",
+              "outfits": [
+                {
+                  "outfit_id": "AN_DEFAULT",
+                  "description_en": "Yellow jacket, blue cloth shoulder bag, dark trousers and brown shoes."
+                }
+              ],
+              "proposed_details": [
+                "Chi tiết thiết kế bổ sung cho fixture; cần người dùng duyệt."
+              ]
+            },
+            {
+              "character_id": "BAO",
+              "display_name": "Bao",
+              "identity_description_en": "Young boy with curly brown hair.",
+              "reference_key": "CHAR_BAO_DEFAULT",
+              "reference_status": "missing",
+              "outfits": [
+                {
+                  "outfit_id": "BAO_DEFAULT",
+                  "description_en": "Green sweater with pockets, brown trousers and dark shoes."
+                }
+              ],
+              "proposed_details": [
+                "Chi tiết thiết kế bổ sung cho fixture; cần người dùng duyệt."
+              ]
+            },
+            {
+              "character_id": "MIU",
+              "display_name": "Miu",
+              "identity_description_en": "Small golden tabby cat with a white tail tip.",
+              "reference_key": "CHAR_MIU_DEFAULT",
+              "reference_status": "missing",
+              "outfits": [
+                {
+                  "outfit_id": "MIU_DEFAULT",
+                  "description_en": "Natural fur, no clothes or accessories."
+                }
+              ],
+              "proposed_details": [
+                "Chi tiết thiết kế bổ sung cho fixture; cần người dùng duyệt."
+              ]
+            },
+            {
+              "character_id": "ONG_LAM",
+              "display_name": "Mr Lam",
+              "identity_description_en": "Elderly man with silver hair and a kind face.",
+              "reference_key": "CHAR_ONG_LAM_DEFAULT",
+              "reference_status": "missing",
+              "outfits": [
+                {
+                  "outfit_id": "ONG_LAM_DEFAULT",
+                  "description_en": "Brown vest, cream shirt and dark trousers."
+                }
+              ],
+              "proposed_details": [
+                "Chi tiết thiết kế bổ sung cho fixture; cần người dùng duyệt."
+              ]
+            }
+          ],
+          "style": {
+            "style_id": "STORY_STYLE_01",
+            "reference_key": "STYLE_STORY_STYLE_01",
+            "style_prompt_en": "Children's book watercolor illustration, soft outlines, subtle paper texture, gentle warm palette, consistent natural character proportions."
+          },
+          "scenes": [
+            {
+              "scene_id": "SC001",
+              "source_cue_ids": [
+                1
+              ],
+              "start_time": "00:00:00,000",
+              "end_time": "00:00:08,000",
+              "start_ms": 0,
+              "end_ms": 8000,
+              "source_text": "Ở một ngôi làng dưới chân đồi, An sống cùng chú mèo Miu.\nAn có mái tóc đen ngắn, thường mặc áo khoác vàng và mang túi vải xanh.",
+              "visible_character_ids": [
+                "AN",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Wide establishing view. @AN stands outside her village cottage with @MIU at her feet, wooded hills in the distance.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC002",
+              "source_cue_ids": [
+                2
+              ],
+              "start_time": "00:00:08,000",
+              "end_time": "00:00:16,000",
+              "start_ms": 8000,
+              "end_ms": 16000,
+              "source_text": "Chiều hôm ấy, An nhìn thấy một chiếc đèn lồng đỏ trên bậc cửa.\nMiu ngồi cạnh chân cô bé, chăm chú nhìn ngọn đèn chưa được thắp sáng.",
+              "visible_character_ids": [
+                "AN",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium shot. @AN looks down at an unlit red lantern on the doorstep; @MIU sits beside her left foot looking at the lantern. Late afternoon.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC003",
+              "source_cue_ids": [
+                3
+              ],
+              "start_time": "00:00:16,000",
+              "end_time": "00:00:24,000",
+              "start_ms": 16000,
+              "end_ms": 24000,
+              "source_text": "Dưới quai đèn có một mảnh giấy: “Nhờ cháu mang đèn đến cầu gỗ trước khi trời tối.”\nAn nghĩ ngay đến ông Lâm, người vẫn chăm sóc cây cầu của làng.",
+              "visible_character_ids": [
+                "AN"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Close view of @AN reading a small note tied beneath the handle of the red lantern. The paper has no legible writing. No other person is visible.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC004",
+              "source_cue_ids": [
+                4
+              ],
+              "start_time": "00:00:24,000",
+              "end_time": "00:00:32,000",
+              "start_ms": 24000,
+              "end_ms": 32000,
+              "source_text": "An xách chiếc đèn bằng tay phải rồi bước lên con đường ven rừng.\nMiu đi theo bên chân trái của cô bé.",
+              "visible_character_ids": [
+                "AN",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Full shot on the forest path. @AN carries the unlit red lantern in her right hand. @MIU walks by her left foot.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC005",
+              "source_cue_ids": [
+                5
+              ],
+              "start_time": "00:00:32,000",
+              "end_time": "00:00:40,000",
+              "start_ms": 32000,
+              "end_ms": 40000,
+              "source_text": "Phía trước, con đường đất uốn quanh những bụi hoa trắng.\nNắng cuối chiều xuyên qua tán lá, trải những vệt vàng trên lối đi vắng.",
+              "visible_character_ids": [],
+              "outfit_by_character": {},
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Empty winding dirt path among white flowers. Late afternoon sun falls through the trees. No people or animals.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC006",
+              "source_cue_ids": [
+                6
+              ],
+              "start_time": "00:00:40,000",
+              "end_time": "00:00:48,000",
+              "start_ms": 40000,
+              "end_ms": 48000,
+              "source_text": "Đến bên suối, An gặp Bảo, cậu bạn tóc nâu xoăn, mặc áo len xanh và quần nâu.\nBảo đang quỳ trên bờ đá, nhìn chiếc thuyền giấy mắc giữa hai hòn đá dưới nước.",
+              "visible_character_ids": [
+                "AN",
+                "BAO"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Wide shot of the stream bank. @AN stands holding the unlit red lantern. @BAO kneels on the rocky bank looking at a paper boat trapped between two rocks in the water.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC007",
+              "source_cue_ids": [
+                7
+              ],
+              "start_time": "00:00:48,000",
+              "end_time": "00:00:56,000",
+              "start_ms": 48000,
+              "end_ms": 56000,
+              "source_text": "An đặt đèn lồng lên một tảng đá khô, rồi giữ tay Bảo.\nBảo dùng một cành cây dài kéo chiếc thuyền giấy về phía bờ. Miu đứng cạnh chiếc đèn.",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium-wide view. @AN holds @BAO by his free hand. @BAO reaches toward the paper boat using a long branch in his other hand. The unlit red lantern rests on a dry rock; @MIU stands beside it.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC008",
+              "source_cue_ids": [
+                8
+              ],
+              "start_time": "00:00:56,000",
+              "end_time": "00:01:04,000",
+              "start_ms": 56000,
+              "end_ms": 64000,
+              "source_text": "Chiếc thuyền giấy đã được lấy lên, ướt một góc nhưng vẫn còn nguyên.\nBảo cầm thuyền bằng hai tay, mỉm cười với An. Miu ngước nhìn hai bạn.",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium shot. @BAO holds a slightly wet paper boat in both hands and smiles at @AN. @MIU looks up at them. The red lantern remains on the dry rock.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC009",
+              "source_cue_ids": [
+                9
+              ],
+              "start_time": "00:01:04,000",
+              "end_time": "00:01:12,000",
+              "start_ms": 64000,
+              "end_ms": 72000,
+              "source_text": "An xách lại chiếc đèn lồng đỏ. Bảo cất thuyền giấy vào túi áo len.\nHai bạn cùng Miu tiếp tục đi về phía cây cầu gỗ.",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Wide shot of the path toward the wooden bridge. @AN holds the red lantern in her right hand. @BAO walks next to her with the paper boat already tucked in his green sweater pocket. @MIU walks nearby.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC010",
+              "source_cue_ids": [
+                10
+              ],
+              "start_time": "00:01:12,000",
+              "end_time": "00:01:20,000",
+              "start_ms": 72000,
+              "end_ms": 80000,
+              "source_text": "Dưới cầu, dòng suối phản chiếu bầu trời tím nhạt.\nMột chiếc lá vàng trôi qua bóng những thanh gỗ, giữa mặt nước yên tĩnh.",
+              "visible_character_ids": [],
+              "outfit_by_character": {},
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Close view of stream water beneath a wooden bridge. A single yellow leaf drifts across reflections of violet dusk and bridge beams. No people or animals.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC011",
+              "source_cue_ids": [
+                11
+              ],
+              "start_time": "00:01:20,000",
+              "end_time": "00:01:28,000",
+              "start_ms": 80000,
+              "end_ms": 88000,
+              "source_text": "Bảo đứng đợi ở lối vào cầu cùng Miu.\nAn mang đèn đến chỗ ông Lâm, người có mái tóc bạc và chiếc áo ghi lê nâu.",
+              "visible_character_ids": [
+                "AN",
+                "ONG_LAM"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "ONG_LAM": "ONG_LAM_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "ONG_LAM",
+                  "outfit_id": "ONG_LAM_DEFAULT",
+                  "reference_key": "CHAR_ONG_LAM_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium view beside the bridge. @AN approaches @ONG_LAM while carrying the red lantern. The bridge entrance and waiting companions are outside the frame.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC012",
+              "source_cue_ids": [
+                12
+              ],
+              "start_time": "00:01:28,000",
+              "end_time": "00:01:36,000",
+              "start_ms": 88000,
+              "end_ms": 96000,
+              "source_text": "Ông Lâm nhận chiếc đèn từ An, bật công tắc nhỏ rồi treo nó lên móc cạnh cầu.\nÁnh sáng vàng ấm tỏa ra sau lớp vỏ đỏ.",
+              "visible_character_ids": [
+                "AN",
+                "ONG_LAM"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "ONG_LAM": "ONG_LAM_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "ONG_LAM",
+                  "outfit_id": "ONG_LAM_DEFAULT",
+                  "reference_key": "CHAR_ONG_LAM_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Medium shot. @ONG_LAM hangs the now glowing red lantern on the wooden hook beside the bridge. @AN watches with empty hands. One moment after the switch has been turned on.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC013",
+              "source_cue_ids": [
+                13
+              ],
+              "start_time": "00:01:36,000",
+              "end_time": "00:01:44,000",
+              "start_ms": 96000,
+              "end_ms": 104000,
+              "source_text": "Cận cảnh chiếc đèn lồng đỏ đung đưa trên móc gỗ.\nPhía sau là dòng suối tím xanh; trong khung hình không có người hay con vật.",
+              "visible_character_ids": [],
+              "outfit_by_character": {},
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Close-up of the red lantern glowing warm yellow, hanging on its wooden hook. Blue-violet stream in the background. No people or animals.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC014",
+              "source_cue_ids": [
+                14
+              ],
+              "start_time": "00:01:44,000",
+              "end_time": "00:01:52,000",
+              "start_ms": 104000,
+              "end_ms": 112000,
+              "source_text": "An và Bảo đứng cạnh ông Lâm dưới ánh đèn. Miu ngồi giữa hai bạn nhỏ.\nÔng nói: “Một việc tốt nhỏ cũng có thể soi sáng đường về.”",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU",
+                "ONG_LAM"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT",
+                "ONG_LAM": "ONG_LAM_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "ONG_LAM",
+                  "outfit_id": "ONG_LAM_DEFAULT",
+                  "reference_key": "CHAR_ONG_LAM_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Wide shot under the glowing red lantern. @AN and @BAO stand beside @ONG_LAM. @MIU sits between the children. Calm dusk beside the wooden bridge.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            },
+            {
+              "scene_id": "SC015",
+              "source_cue_ids": [
+                15
+              ],
+              "start_time": "00:01:52,000",
+              "end_time": "00:02:00,000",
+              "start_ms": 112000,
+              "end_ms": 120000,
+              "source_text": "Trên đường về, An bước cạnh Bảo, còn Miu đi phía trước.\nChiếc đèn vẫn sáng bên cầu, nhỏ dần sau lưng cả ba.",
+              "visible_character_ids": [
+                "AN",
+                "BAO",
+                "MIU"
+              ],
+              "outfit_by_character": {
+                "AN": "AN_DEFAULT",
+                "BAO": "BAO_DEFAULT",
+                "MIU": "MIU_DEFAULT"
+              },
+              "style_id": "STORY_STYLE_01",
+              "reference_bindings": [
+                {
+                  "role": "character",
+                  "character_id": "AN",
+                  "outfit_id": "AN_DEFAULT",
+                  "reference_key": "CHAR_AN_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "BAO",
+                  "outfit_id": "BAO_DEFAULT",
+                  "reference_key": "CHAR_BAO_DEFAULT"
+                },
+                {
+                  "role": "character",
+                  "character_id": "MIU",
+                  "outfit_id": "MIU_DEFAULT",
+                  "reference_key": "CHAR_MIU_DEFAULT"
+                },
+                {
+                  "role": "style",
+                  "character_id": null,
+                  "outfit_id": null,
+                  "reference_key": "STYLE_STORY_STYLE_01"
+                }
+              ],
+              "prompt_en": "Rear wide view. @AN and @BAO walk home with @MIU ahead. The glowing red lantern remains hanging beside the distant bridge behind them. An's hands are empty.",
+              "negative_prompt_en": "No text, watermark, extra or duplicate characters, swapped faces or outfits.",
+              "ready_for_generation": false
+            }
+          ]
+        },
+        "library": {},
+        "maxReferences": 8,
+        "referenceLimitVerified": false
+      },
+      "version": 1
+    },
+    {
+      "id": "prepare",
+      "type": "scene-prepare",
+      "position": {
+        "x": 950,
+        "y": 0
+      },
+      "data": {},
+      "version": 1
+    },
+    {
+      "id": "upload",
+      "type": "upload-image",
+      "position": {
+        "x": 950,
+        "y": 400
+      },
+      "data": {},
+      "version": 1
+    },
+    {
+      "id": "image",
+      "type": "generate-image",
+      "position": {
+        "x": 1320,
+        "y": 0
+      },
+      "data": {
+        "imageMode": "image-to-image",
+        "model": "GEM_PIX_2",
+        "ratio": "16:9",
+        "count": 1,
+        "quotaFallback": false,
+        "contentFallback": "none"
+      },
+      "version": 1
+    },
+    {
+      "id": "result",
+      "type": "result",
+      "position": {
+        "x": 1700,
+        "y": 0
+      },
+      "data": {
+        "batchRole": "output",
+        "batchKey": "story-images",
+        "batchLabel": "Ảnh truyện"
+      },
+      "version": 1
+    }
+  ],
+  "edges": [
+    {
+      "id": "story-edge-0",
+      "source": "story",
+      "target": "prepare",
+      "sourceHandle": "text-out",
+      "targetHandle": "text-in-0"
+    },
+    {
+      "id": "story-edge-1",
+      "source": "refs",
+      "target": "prepare",
+      "sourceHandle": "text-out",
+      "targetHandle": "text-in-1"
+    },
+    {
+      "id": "story-edge-2",
+      "source": "prepare",
+      "target": "upload",
+      "sourceHandle": "image-out",
+      "targetHandle": "image-in"
+    },
+    {
+      "id": "story-edge-3",
+      "source": "prepare",
+      "target": "image",
+      "sourceHandle": "text-out",
+      "targetHandle": "text-in"
+    },
+    {
+      "id": "story-edge-4",
+      "source": "upload",
+      "target": "image",
+      "sourceHandle": "image-out",
+      "targetHandle": "image-in"
+    },
+    {
+      "id": "story-edge-5",
+      "source": "image",
+      "target": "result",
+      "sourceHandle": "image-out",
+      "targetHandle": "image-in"
+    }
+  ]
+}

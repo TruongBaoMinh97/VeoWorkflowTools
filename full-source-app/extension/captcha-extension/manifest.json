@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "UpProject Captcha Bridge",
+  "version": "1.9.2",
+  "description": "Mints reCAPTCHA Enterprise tokens on labs.google / flow.google.com for UpProject's local backend.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "scripting",
+    "cookies",
+    "browsingData"
+  ],
+  "host_permissions": [
+    "https://labs.google/*",
+    "https://*.google.com/*",
+    "https://google.com/*",
+    "https://*.recaptcha.net/*",
+    "https://recaptcha.net/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "UpProject Captcha Bridge"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://labs.google/fx/tools/flow*",
+        "https://labs.google/fx/*/tools/flow*",
+        "https://flow.google.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "injected.js"
+      ],
+      "matches": [
+        "https://labs.google/*",
+        "https://flow.google.com/*"
+      ]
+    }
+  ]
+}

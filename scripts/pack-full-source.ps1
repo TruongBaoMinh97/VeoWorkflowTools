@@ -20,6 +20,19 @@ if (-not (Test-Path $Packager)) {
 
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 
+# Build from the editable source and refresh both unpacked backend mirrors before
+# electron-packager copies full-resources/server into the release. Without this,
+# an older runtime can silently overwrite the freshly built server in the app.
+& npm.cmd run build
+if ($LASTEXITCODE -ne 0) {
+  throw "source build failed with code $LASTEXITCODE"
+}
+
+& node (Join-Path $Root "scripts\sync-built-server-runtime.cjs")
+if ($LASTEXITCODE -ne 0) {
+  throw "server runtime sync failed with code $LASTEXITCODE"
+}
+
 & $Packager $Source $ProductName `
   --platform=win32 `
   --arch=x64 `

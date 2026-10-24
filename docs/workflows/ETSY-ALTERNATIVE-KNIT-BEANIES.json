@@ -1,0 +1,102 @@
+{
+  "kind": "flow-workflow",
+  "schemaVersion": 1,
+  "name": "ETSY - Mũ len Alternative - Nano Banana Pro",
+  "description": "Mỗi ảnh mũ trong folder là một job độc lập. Nano Banana Pro tự phân tích sản phẩm, chọn model hoặc ảnh standalone, bối cảnh, góc máy và ánh sáng phù hợp; luôn giữ nguyên màu, kiểu đan, phom, họa tiết và toàn bộ chi tiết vật lý của mũ. Tạo đúng 1 ảnh listing vuông 1:1 cho mỗi sản phẩm.",
+  "viewport": {
+    "x": 80,
+    "y": 80,
+    "zoom": 0.78
+  },
+  "nodes": [
+    {
+      "id": "beanie-product",
+      "type": "folder-input",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "referenceRole": "garment",
+        "batchRole": "input",
+        "batchKey": "mu-len",
+        "batchLabel": "Ảnh mũ len - mỗi ảnh một sản phẩm",
+        "batchOrder": 1,
+        "folderPath": "",
+        "outputDir": "",
+        "groupMode": "files"
+      },
+      "label": "01 - Folder ảnh mũ len",
+      "version": 1
+    },
+    {
+      "id": "beanie-master-prompt",
+      "type": "prompt",
+      "position": {
+        "x": 0,
+        "y": 360
+      },
+      "data": {
+        "prompt": "UNIVERSAL MASTER PROMPT — ALTERNATIVE KNIT BEANIES\nNano Banana Pro | Etsy Product Photography\n\nCURRENT JOB\nCreate exactly one finished, polished, photorealistic square 1:1 Etsy listing photograph from the single current beanie reference supplied to this generation. Analyze this reference independently. The current reference image is the sole source of truth for the actual product. The product determines the photography; the reference determines the design; the shop aesthetic determines only the overall art direction.\n\n1. EXACT PRODUCT RECOGNITION — HIGHEST PRIORITY\nBefore composing the photograph, inspect the current beanie and preserve every visible product fact exactly:\n- original color and color distribution;\n- stripe direction, spacing, pattern, contrast and number of visible stripes;\n- silhouette, crown shape, proportions, cuff, brim, rolled edge, slouch and fit;\n- knit construction, stitch pattern, yarn thickness, fibers and material texture;\n- distressed areas, loose fibers, frayed yarn, seams and folds;\n- genuine product graphics, symbols, lettering, patches, embroidery and knitted motifs;\n- physical ornaments such as crosses, charms, studs, chains, appliques, pom-poms and ties;\n- the exact number, shape, size, orientation, placement, color and finish of every visible decoration.\n\nReproduce only the design shown in the current reference. Do not transfer a cross, symbol, stripe, pom-pom, cat ear, patch, word, ornament, color or construction detail from another product, a previous generation or the general alternative-fashion aesthetic. If the current product is plain, keep it plain. If it is colorful, preserve those exact colors. If a feature is partially obscured or unsupported, choose a composition that does not require inventing it.\n\nStrict product lock: improve the photograph, never redesign the beanie. Do not simplify, clean up, beautify, replace, remove, duplicate, mirror, resize, reposition or invent product components. Do not change the original material, proportions or construction to suit the model, background or lighting.\n\n2. REMOVE ADVERTISING, NOT PRODUCT DETAILS\nRemove all non-product content inherited from the source image: watermarks, seller text, URLs, price labels, promotional cards, borders, banners, social-media UI, unrelated shop clutter and graphic overlays. Do not reproduce the original advertising layout.\n\nPreserve lettering, symbols, embroidery, patches, knit patterns and ornaments that physically belong to the beanie. For example, real knitted wording or an attached cross is product detail, not an advertising overlay. Do not add any new text, logo, watermark, slogan, badge or price.\n\n3. AUTOMATIC PRESENTATION DECISION\nChoose the presentation that communicates this exact beanie most accurately:\n- Use a photorealistic adult Western male model, approximately 22–35, when masculine alternative styling best suits the product.\n- Use a photorealistic adult Western female model, approximately 22–32, when feminine alternative styling best suits the product.\n- For unisex styling, choose either adult model according to which presentation makes the current beanie easiest to understand.\n- Use a clean standalone product photograph when a person would obscure the product, distort its silhouette or make its details harder to reproduce.\n\nWhen using a model, create an original adult identity with believable Western/European facial features, natural skin pores, individual hair strands, realistic anatomy and an authentic expression. Do not copy a person from the source and do not use East Asian facial characteristics, a doll-like face, plastic skin, excessive beauty filtering, artificial symmetry or exaggerated proportions. The model, hair, hands and clothing must never hide the beanie's defining front detail, cuff, silhouette or ornament.\n\n4. ADAPTIVE STYLING\nSelect only clothing and styling that complement the current product: contemporary alternative streetwear, grunge, Dark Y2K, understated Gothic fashion, minimalist urban clothing, an oversized coat, leather jacket, distressed denim or neutral knitwear. Keep clothing quiet when the beanie is striped, graphic, colorful or heavily decorated. Never add Gothic symbols, jewelry, chains, makeup, long black hair or leather merely because the shop aesthetic is alternative. Preserve natural volume and fit for oversized or slouchy styles.\n\n5. COHESIVE BUT VARIED SHOP IDENTITY\nThe result should feel contemporary, authentic, edgy, youthful and editorial, suitable for an independent alternative-fashion Etsy shop. Use photographic quality, believable styling and restrained art direction to create cohesion, not repeated poses or identical backgrounds. Preserve the actual product color; select complementary neutrals or restrained colors around it. A dark beanie needs tonal separation, while a light beanie needs controlled highlights.\n\n6. AUTOMATIC LOCATION SELECTION\nChoose one realistic environment that best reveals the current product: a European urban street, spacious loft, vintage cafe, industrial interior, old courtyard, stone staircase, architectural corridor, minimalist studio, understated residential reading corner, vintage sofa, shaded walkway or urban park. Use real spatial depth with a clear foreground, midground and background when appropriate. Vary the location across products. Do not default to a flat brick or concrete wall. Do not add excessive props. The environment must remain secondary and must not contaminate the beanie's color or conceal its edge.\n\n7. CAMERA AND COMPOSITION\nChoose the best angle for the current product: close-up detail portrait, front view, three-quarter portrait, side view, medium fashion portrait, seated or walking lifestyle view, wider environmental portrait, or standalone product view. Preserve the recognizability of graphics and stripes without perspective warping. Keep every important ornament visible. Emphasize genuine yarn and stitches.\n\nUse one continuous square 1:1 photograph. The beanie must be the immediate focal point and remain recognizable at Etsy thumbnail size. Keep the full important product area inside the frame with comfortable margins. No collage, contact sheet, split screen, comparison chart, infographic, mood board, multi-panel layout or image grid.\n\n8. LIGHTING AND MATERIAL RENDERING\nUse soft directional daylight, natural window light, realistic ambient light or controlled studio light according to the product. Reveal knit structure, yarn fibers, distressed details, graphics and physical decorations without changing them. Preserve realistic metal reflections and the actual finish of ornaments. Maintain natural skin tones, accurate fabric color, physical contact shadows and believable depth of field. Avoid strong color casts, crushed blacks, blown highlights, artificial HDR, excessive blur and dramatic lighting that hides details.\n\n9. PHOTOREALISM\nThe final image must look like a genuine professional fashion photograph captured in a real environment, not a 3D render or illustration. Require natural skin texture, individual hair strands, clearly resolved stitches and fibers, physically plausible fabric folds, believable anatomy, consistent light and camera perspective. Avoid warped symbols, broken stripes, misspelled physical lettering, duplicated ornaments, synthetic knit texture, floating accessories, deformed anatomy and obvious AI artifacts. Do not make the product look more luxurious by changing its material or construction.\n\n10. FINAL INTERNAL QUALITY CHECK\nBefore producing the image, compare the planned result with the current reference and confirm internally:\n- exact product color and distribution are unchanged;\n- shape, cuff, crown, fit and proportions are unchanged;\n- stitch, stripe, graphic and physical lettering remain accurate;\n- every real decoration has the correct count, placement and finish;\n- nothing from another beanie has been introduced;\n- advertising overlays are gone but product details remain;\n- the beanie is unobscured, sharp and dominant at thumbnail size;\n- model choice, pose, background and light serve this product rather than redesigning it;\n- exactly one clean square 1:1 photograph is produced with no added typography or layout graphics.\n\nPRIORITY ORDER\n1. Preserve the exact product design.\n2. Keep the product clearly visible and recognizable.\n3. Choose an appropriate adult model or standalone presentation.\n4. Select a complementary varied setting, angle and lighting.\n5. Maintain the alternative-fashion shop identity.\n6. Achieve natural professional photorealism.\n7. Remove all non-product advertising content.\n\nNever sacrifice product accuracy for aesthetics. Adapt the photography to the current beanie, never the beanie to the photography. Generate the single final image now."
+      },
+      "label": "02 - Master Prompt mũ len Alternative",
+      "version": 1
+    },
+    {
+      "id": "generate-beanie-listing",
+      "type": "generate-image",
+      "position": {
+        "x": 580,
+        "y": 0
+      },
+      "data": {
+        "imageMode": "image-to-image",
+        "model": "GEM_PIX_2",
+        "ratio": "1:1",
+        "count": 1,
+        "contentFallback": "none"
+      },
+      "label": "03 - Nano Banana Pro tạo ảnh Etsy 1:1",
+      "version": 1
+    },
+    {
+      "id": "beanie-result",
+      "type": "result",
+      "position": {
+        "x": 960,
+        "y": 0
+      },
+      "data": {
+        "batchRole": "output",
+        "batchKey": "anh-mu-len-etsy",
+        "batchLabel": "Ảnh mũ len Etsy thành phẩm",
+        "batchOrder": 1
+      },
+      "label": "04 - Kết quả",
+      "version": 1
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-product-to-image",
+      "source": "beanie-product",
+      "target": "generate-beanie-listing",
+      "sourceHandle": "image-out",
+      "targetHandle": "image-in"
+    },
+    {
+      "id": "e-prompt-to-image",
+      "source": "beanie-master-prompt",
+      "target": "generate-beanie-listing",
+      "sourceHandle": "text-out",
+      "targetHandle": "text-in"
+    },
+    {
+      "id": "e-image-to-result",
+      "source": "generate-beanie-listing",
+      "target": "beanie-result",
+      "sourceHandle": "image-out",
+      "targetHandle": "image-in"
+    }
+  ]
+}

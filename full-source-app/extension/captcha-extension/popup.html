@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>UpProject Bridge</title>
+  <style>
+    :root {
+      --bg: #ffffff; --surface: #f8fafc; --fg: #111827; --fg-muted: #6b7280;
+      --border: #e5e7eb; --accent: #4f46e5; --radius: 8px;
+      --c-green: #16a34a; --c-green-bg: #dcfce7; --c-green-ring: rgba(22,163,74,.25);
+      --c-amber: #d97706; --c-amber-bg: #fef3c7;
+      --c-red: #dc2626; --c-red-bg: #fee2e2;
+      --c-slate: #475569; --c-slate-bg: #f1f5f9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111827; --surface: #1f2937; --fg: #f9fafb; --fg-muted: #9ca3af;
+        --border: #374151; --accent: #818cf8;
+        --c-green: #4ade80; --c-green-bg: #14532d; --c-green-ring: rgba(74,222,128,.2);
+        --c-amber: #fbbf24; --c-amber-bg: #451a03;
+        --c-red: #f87171; --c-red-bg: #450a0a;
+        --c-slate: #94a3b8; --c-slate-bg: #1e293b;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      width: 320px; background: var(--bg); color: var(--fg); overflow: hidden;
+    }
+    .status-banner {
+      padding: 18px 16px 14px; display: flex; align-items: flex-start; gap: 12px;
+      border-bottom: 1px solid var(--border); transition: background 200ms ease;
+    }
+    .status-banner[data-state="connected"] { background: var(--c-green-bg); }
+    .status-banner[data-state="stale"] { background: var(--c-amber-bg); }
+    .status-banner[data-state="offline"] { background: var(--c-red-bg); }
+    .status-banner[data-state="noconfig"] { background: var(--c-slate-bg); }
+    .dot {
+      width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; margin-top: 4px;
+      transition: background 200ms ease, box-shadow 200ms ease;
+    }
+    .dot[data-state="connected"] {
+      background: var(--c-green); box-shadow: 0 0 0 4px var(--c-green-ring);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .dot[data-state="stale"] { background: var(--c-amber); }
+    .dot[data-state="offline"] { background: var(--c-red); }
+    .dot[data-state="noconfig"] { background: var(--c-slate); }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 4px var(--c-green-ring); }
+      50% { box-shadow: 0 0 0 7px var(--c-green-ring); }
+    }
+    .status-label { font-size: 15px; font-weight: 600; line-height: 1.3; }
+    .status-sub {
+      font-size: 12px; color: var(--fg-muted); margin-top: 3px;
+      font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+    }
+    .actions { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 9px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 500;
+      font-family: inherit; cursor: pointer; border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--fg); width: 100%;
+      transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+      text-align: center; white-space: nowrap;
+    }
+    .btn:hover { border-color: var(--accent); background: var(--bg); }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .footer {
+      padding: 8px 16px 10px; border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--fg-muted); text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="status-banner" id="status-banner" data-state="noconfig"
+       role="status" aria-live="polite" aria-atomic="true">
+    <div class="dot" id="status-dot" data-state="noconfig" aria-hidden="true"></div>
+    <div class="status-text">
+      <div class="status-label" id="status-label">Đang kiểm tra…</div>
+      <div class="status-sub" id="status-sub">—</div>
+    </div>
+  </div>
+
+  <nav class="actions" aria-label="Thao tác nhanh">
+    <button id="btn-options" class="btn">⚙️ &nbsp;Cài đặt</button>
+    <button id="btn-flow" class="btn">🎬 &nbsp;Mở Flow AI</button>
+  </nav>
+
+  <footer class="footer" id="footer">UpProject Captcha Bridge</footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+/* PROMPT_REWRITE_UI_START */
+function PromptRewriteSettings(){
+ const [key,setKey]=u.useState(''),[model,setModel]=u.useState(''),[configured,setConfigured]=u.useState(false),[loading,setLoading]=u.useState(true),[busy,setBusy]=u.useState(false),[message,setMessage]=u.useState('');
+ u.useEffect(()=>{let live=true;Promise.all([ye.get('/api/app-settings/openai_api_key'),ye.get('/api/app-settings/prompt_rewrite_model')]).then(([a,b])=>{if(live){setConfigured(Al(a).configured);setModel(Al(b).masked||'')}}).catch(()=>{if(live)setMessage('Không tải được cấu hình GPT. Đóng và mở lại cài đặt để thử lại.')}).finally(()=>{if(live)setLoading(false)});return()=>{live=false}},[]);
+ const save=async()=>{setBusy(true);setMessage('');try{if(key.trim()){await ye.put('/api/app-settings/openai_api_key',{value:key.trim()});setKey('');setConfigured(true)}await ye.put('/api/app-settings/prompt_rewrite_model',{value:model.trim()});setMessage('Đã lưu cấu hình GPT.')}catch(err){setMessage(err.response?.data?.message||err.message||'Không lưu được cấu hình.')}finally{setBusy(false)}};
+ return e.jsxs('section',{className:'rounded-lg border border-teal-200 p-3 space-y-2',children:[
+ e.jsx('h4',{className:'text-sm font-semibold text-teal-800',children:'GPT · Viết lại prompt lỗi chính sách'}),
+ e.jsx('p',{className:'text-xs text-slate-500',children:'Gom tối đa 5 prompt/request. Xem và sửa kết quả trước khi áp dụng; sau đó tự bấm gen lại ảnh.'}),
+ e.jsx('label',{className:'block text-xs',children:'OpenAI API key'}),
+ e.jsx('input',{'aria-label':'OpenAI API key viết lại prompt',type:'password',autoComplete:'off',value:key,disabled:loading||busy,onChange:ev=>setKey(ev.target.value),placeholder:configured?'Đã lưu key · nhập để thay đổi':'Nhập API key OpenAI',className:'w-full border rounded p-2 text-sm'}),
+ e.jsx('label',{className:'block text-xs',children:'Model GPT'}),
+ e.jsx('input',{'aria-label':'Model GPT viết lại prompt',value:model,disabled:loading||busy,onChange:ev=>setModel(ev.target.value),placeholder:'Nhập ID model trong tài khoản OpenAI',className:'w-full border rounded p-2 text-sm'}),
+ e.jsx('button',{type:'button',disabled:loading||busy||!model.trim()||(!configured&&!key.trim()),onClick:save,style:{backgroundColor:'#0f766e',color:'#fff'},className:'rounded px-3 py-2 text-sm disabled:opacity-50',children:busy?'Đang lưu…':'Lưu cấu hình GPT'}),
+ message&&e.jsx('p',{role:'status',className:'text-xs text-slate-600',children:message})]});
+}
+function PolicyPromptRewrite({projectId,jobs,onUpdated}){
+ const base='/api/gen-normal/projects/'+projectId+'/prompt-rewrite',storage='prompt-rewrite:'+projectId;
+ const count=jobs.filter(j=>j.status==='FAILED'&&/vi phạm chính sách|safety|policy|prohibited|blocked.*content|PUBLIC_ERROR_UNSAFE/i.test(j.error||'')).length;
+ const [busy,setBusy]=u.useState(false),[task,setTask]=u.useState(null),[rows,setRows]=u.useState([]),[open,setOpen]=u.useState(false),[error,setError]=u.useState(''),[message,setMessage]=u.useState('');
+ const live=u.useRef(true);
+ const poll=async id=>{setBusy(true);try{while(live.current){const t=Al(await ye.get(base+'/'+id));if(!live.current)return;setTask(t);if(t.status!=='RUNNING'&&t.status!=='APPLYING'){setRows(t.results||[]);if(t.error)setError(t.error);if(t.status==='APPLIED'){localStorage.removeItem(storage);setOpen(false);setMessage('Đã áp dụng prompt. Bạn có thể bấm gen lại ảnh.');await onUpdated();}else setOpen(true);return;}await new Promise(r=>setTimeout(r,1200));}}catch(err){if(live.current){setError(err.response?.data?.message||err.message);if(err.response?.status===404)localStorage.removeItem(storage);}}finally{if(live.current)setBusy(false)}};
+ u.useEffect(()=>{live.current=true;const id=localStorage.getItem(storage);if(id)poll(id);return()=>{live.current=false}},[projectId]);
+ const start=async()=>{if(task&&['READY','PARTIAL'].includes(task.status)){setOpen(true);return}const pending=localStorage.getItem(storage);if(pending){setOpen(true);setError('');await poll(pending);return}setBusy(true);setError('');setMessage('');try{const t=Al(await ye.post(base,{}));localStorage.setItem(storage,t.id);setTask(t);setOpen(true);await poll(t.id)}catch(err){setError(err.response?.data?.message||err.message);setBusy(false)}};
+ const apply=async()=>{setBusy(true);setError('');try{const result=Al(await ye.post(base+'/'+task.id+'/apply',{prompts:rows.map(r=>({id:r.id,prompt:r.prompt}))}));localStorage.removeItem(storage);setTask(null);setRows([]);setOpen(false);setMessage('Đã cập nhật '+result.updated+' prompt. Bấm gen lại khi đã sẵn sàng.');await onUpdated()}catch(err){setError(err.response?.data?.message||err.message)}finally{setBusy(false)}};
+ const discard=async()=>{setBusy(true);try{await ye.delete(base+'/'+task.id);localStorage.removeItem(storage);setTask(null);setRows([]);setOpen(false);setError('')}catch(err){setError(err.response?.data?.message||err.message)}finally{setBusy(false)}};
+ return e.jsxs(e.Fragment,{children:[
+ e.jsx('button',{type:'button',disabled:busy||(!count&&!task),onClick:start,title:'Viết lại prompt báo lỗi chính sách bằng GPT, tối đa 5 prompt/request',className:'px-2 py-1 text-xs font-medium border rounded-md disabled:opacity-50',style:{color:'#0f766e',borderColor:'#99d5cb',background:'#f0fdfa'},children:busy?'GPT '+(task?.completed||0)+'/'+(task?.total||count)+'…':task&&['READY','PARTIAL'].includes(task.status)?'Xem prompt GPT':'GPT · Viết lại lỗi chính sách ('+count+')'}),
+ message&&e.jsx('span',{role:'status',className:'text-xs text-teal-700',children:message}),
+ error&&!open&&e.jsx('span',{role:'alert',className:'text-xs text-red-600',children:error}),
+ open&&e.jsx('div',{className:'fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4',children:e.jsxs('div',{role:'dialog','aria-label':'Kết quả viết lại prompt GPT',className:'bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col',children:[
+ e.jsxs('div',{className:'p-4 border-b flex justify-between items-center',children:[e.jsx('h3',{className:'font-semibold',children:'GPT · Viết lại prompt lỗi chính sách'}),e.jsx('button',{type:'button','aria-label':'Đóng kết quả GPT',onClick:()=>setOpen(false),children:'✕'})]}),
+ e.jsxs('div',{className:'p-4 overflow-y-auto space-y-3',children:[
+ e.jsx('p',{role:'status',className:'text-sm',children:busy?'Đang xử lý '+(task?.completed||0)+'/'+(task?.total||count)+' prompt · tối đa 5 prompt/request':'Đã nhận '+rows.length+'/'+(task?.total||count)+' prompt · '+(task?.requests||0)+' request'}),
+ e.jsx('p',{className:'text-xs text-slate-500',children:'Kiểm tra nội dung bên dưới trước khi áp dụng. Ảnh sẽ không tự chạy lại.'}),
+ error&&e.jsx('p',{role:'alert',className:'text-sm text-red-600',children:error}),
+ ...rows.map((r,i)=>e.jsxs('div',{className:'border rounded p-3 space-y-2',children:[e.jsx('label',{className:'font-semibold text-sm',children:'Prompt #'+(r.jobIndex+1)}),e.jsxs('details',{className:'text-xs text-slate-500',children:[e.jsx('summary',{children:'Xem prompt cũ'}),e.jsx('p',{className:'whitespace-pre-wrap',children:r.original})]}),e.jsx('textarea',{'aria-label':'Prompt GPT #'+(r.jobIndex+1),value:r.prompt,disabled:busy,rows:6,className:'w-full border rounded p-2 text-sm',onChange:ev=>setRows(old=>old.map((x,n)=>n===i?{...x,prompt:ev.target.value}:x))})]},r.id))]}),
+ e.jsxs('div',{className:'p-4 border-t flex gap-2 justify-end',children:[e.jsx('button',{type:'button',disabled:busy||!task,onClick:discard,className:'border rounded px-3 py-2 text-sm disabled:opacity-50',children:'Bỏ kết quả'}),e.jsx('button',{type:'button',disabled:busy||!rows.length||rows.some(r=>!r.prompt.trim()),onClick:apply,style:{backgroundColor:'#0f766e',color:'#fff'},className:'rounded px-3 py-2 text-sm disabled:opacity-50',children:'Áp dụng '+rows.length+' prompt'})]})]})})]});
+}
+/* PROMPT_REWRITE_UI_END */
