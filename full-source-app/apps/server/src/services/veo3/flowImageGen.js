@@ -8,6 +8,7 @@
  */
 import crypto from 'node:crypto';
 import { FLOW_PRODUCT_SLOT, FlowRpcError } from '../../lib/flowBoq.js';
+import { isVerificationRejected, verificationRequiredError } from './verificationFailure.js';
 /**
  * Aspect codes for `ogiZ0b`. Only LANDSCAPE (3) was measured; SQUARE/PORTRAIT follow the
  * proto enum order and are unverified. Ratios without a code are rejected rather than
@@ -110,6 +111,14 @@ export function parseGenerateImageResponse(payload, ctx) {
 /** gRPC codes Google puts in the status cell of a failed row. */
 const GRPC = { INVALID_ARGUMENT: 3, PERMISSION_DENIED: 7, RESOURCE_EXHAUSTED: 8, INTERNAL: 13, UNAVAILABLE: 14, UNAUTHENTICATED: 16 };
 const tag = (message, flags, cause) => Object.assign(new Error(message), flags, { cause });
+const errorEvidence = (err) => {
+    const responseData = err?.response?.data;
+    return [
+        err?.message,
+        err?.errorText,
+        typeof responseData === 'string' ? responseData : responseData ? JSON.stringify(responseData) : undefined,
+    ].filter(value => typeof value === 'string' && value.length > 0).join('\n');
+};
 /**
  * Translate a failed `ogiZ0b` call into the flags the queue manager already routes on
  * (isNonRetryable / isRecaptchaFailure / rate limit / server error / retryable network).
@@ -128,7 +137,14 @@ export function classifyImageGenError(err) {
         return tag(`Prompt bị từ chối (INVALID_ARGUMENT): nội dung không hợp lệ hoặc vi phạm chính sách. [${err.message}]`, { isNonRetryable: true }, err);
     }
     if (grpc === GRPC.PERMISSION_DENIED || status === 403) {
-        return tag('reCAPTCHA bị Google từ chối (Mã 403): Browser session score thấp. Profile sẽ được reset và thử lại.', { isRecaptchaFailure: true }, err);
+        const evidence = errorEvidence(err);
+        if (evidence.includes('PUBLIC_ERROR_MODEL_ACCESS_DENIED')) {
+            return tag('MODEL_ACCESS_DENIED: Tài khoản không có quyền dùng model đã chọn (PUBLIC_ERROR_MODEL_ACCESS_DENIED). Hãy chọn model khác mà tài khoản hỗ trợ hoặc kiểm tra gói tài khoản.', { code: 'MODEL_ACCESS_DENIED', isNonRetryable: true }, err);
+        }
+        if (isVerificationRejected(evidence)) {
+            return verificationRequiredError(err);
+        }
+        return tag(`Flow từ chối quyền truy cập (mã ${status}). Kiểm tra quyền model và phiên đăng nhập trên Google Flow. [${err.message}]`, { code: 'FLOW_PERMISSION_DENIED', isNonRetryable: true }, err);
     }
     if (grpc === GRPC.RESOURCE_EXHAUSTED || status === 429) {
         return tag('Rate limit (Mã 429): Gen quá nhanh, sẽ tự retry sau 30s.', {}, err);

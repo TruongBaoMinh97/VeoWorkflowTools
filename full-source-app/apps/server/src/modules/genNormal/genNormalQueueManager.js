@@ -41,7 +41,7 @@ const ERR_QUOTA_UPGRADEABLE = 'QUOTA_UPGRADEABLE:Profile cần nâng cấp gói 
 // dần theo số lần dính liên tiếp (reset khi submit thành công), thay vì 30-60s của
 // 429 thường vốn quá ngắn để trần này hạ xuống.
 const TRAFFIC_LIMIT_BACKOFF_SEC = [120, 300, 600];
-class GenNormalQueueManager {
+export class GenNormalQueueManager {
     constructor() {
         this.profileQueues = new Map();
         // Cache provider per profile — avoids creating new instance per job (~15KB cookies + config each)
@@ -72,6 +72,9 @@ class GenNormalQueueManager {
         this.cancelledProjects = new Set();
         // Track current batch jobs being processed (for error handling - requeue all batch jobs on 403)
         this.currentBatchJobs = new Map(); // key = first job ID
+        // Keep QUEUED jobs claimed while the provider submit is still in flight.
+        // initializeProject may rebuild queues before Google returns an operation.
+        this.submittingJobs = new Map(); // jobId -> { firstJobId, startedAt }
         // Track consecutive 403 failures per profile for escalating delay
         // Reset to 0 when successful submission
         this.profile403FailureCount = new Map();
@@ -166,6 +169,22 @@ class GenNormalQueueManager {
             return this.MIN_RECAPTCHA_GAP_VIDEO_REF_MS;
         }
         return this.MIN_RECAPTCHA_GAP_MS;
+    }
+    isSubmitting(jobId) {
+        const claim = this.submittingJobs.get(jobId);
+        if (!claim)
+            return false;
+        if (Date.now() - claim.startedAt > GenNormalQueueManager.SUBMITTING_GUARD_MAX_MS) {
+            this.submittingJobs.delete(jobId);
+            return false;
+        }
+        return true;
+    }
+    releaseSubmission(firstJobId) {
+        for (const [jobId, claim] of this.submittingJobs) {
+            if (claim.firstJobId === firstJobId)
+                this.submittingJobs.delete(jobId);
+        }
     }
     /**
      * Get per-profile reCAPTCHA gap based on the full queued job.
@@ -793,8 +812,11 @@ class GenNormalQueueManager {
         if (candidates.length > 0) {
             const claimedIds = new Set(candidates.map((item) => item.jobId));
             queue.queuedJobs = queue.queuedJobs.filter((item) => !claimedIds.has(item.jobId));
-            for (const item of candidates)
+            const startedAt = this.submittingJobs.get(firstJobId)?.startedAt ?? Date.now();
+            for (const item of candidates) {
                 queue.runningJobs.add(item.jobId);
+                this.submittingJobs.set(item.jobId, { firstJobId, startedAt });
+            }
         }
         // Start with the first job that triggered this batch
         const batchJobs = [{
@@ -831,6 +853,7 @@ class GenNormalQueueManager {
                 // were the next-in-line candidates, so restoring at head keeps their
                 // relative priority (push-to-tail would cause a priority inversion).
                 queue.runningJobs.delete(candidate.jobId);
+                this.submittingJobs.delete(candidate.jobId);
                 queue.queuedJobs.unshift(candidate);
             }
         }
@@ -875,13 +898,21 @@ class GenNormalQueueManager {
                 mode: firstJobMode,
                 addedAt: Date.now()
             }];
-        // Collect more jobs of SAME MODE from PROFILE'S PENDING QUEUE (queuedJobs)
+        // Claim candidates synchronously before the first DB lookup. The profile
+        // poller can run again while these awaits are pending, so leaving them in
+        // queuedJobs would allow the same video to be submitted twice.
+        const candidates = queue.queuedJobs
+            .filter(item => item.jobId !== firstJobId && item.mode === firstJobMode && !this.isSubmitting(item.jobId))
+            .slice(0, Math.max(0, this.getProjectBatchSize(profileId) - 1));
+        const claimedIds = new Set(candidates.map(item => item.jobId));
+        queue.queuedJobs = queue.queuedJobs.filter(item => !claimedIds.has(item.jobId));
+        const startedAt = this.submittingJobs.get(firstJobId)?.startedAt ?? Date.now();
+        for (const candidate of candidates) {
+            queue.runningJobs.add(candidate.jobId);
+            this.submittingJobs.set(candidate.jobId, { firstJobId, startedAt });
+        }
         const jobsToRemoveFromQueue = [];
-        for (const queuedJob of queue.queuedJobs) {
-            if (batchJobs.length >= this.getProjectBatchSize(profileId))
-                break;
-            if (queuedJob.jobId === firstJobId)
-                continue; // Skip first job (already added)
+        for (const queuedJob of candidates) {
             const job = await prisma.genNormalJob.findUnique({
                 where: { id: queuedJob.jobId },
                 select: { mode: true, projectId: true, status: true }
@@ -900,15 +931,14 @@ class GenNormalQueueManager {
                 });
                 jobsToRemoveFromQueue.push(queuedJob.jobId);
             }
-        }
-        // Remove batched jobs from profile's queue (they will be processed in batch)
-        if (jobsToRemoveFromQueue.length > 0) {
-            const jobIdsToRemove = new Set(jobsToRemoveFromQueue);
-            queue.queuedJobs = queue.queuedJobs.filter(item => !jobIdsToRemove.has(item.jobId));
-            // Mark these jobs as "running" so they don't get picked up again
-            for (const jobId of jobsToRemoveFromQueue) {
-                queue.runningJobs.add(jobId);
+            else {
+                this.submittingJobs.delete(queuedJob.jobId);
+                queue.runningJobs.delete(queuedJob.jobId);
+                queue.queuedJobs.unshift(queuedJob);
             }
+        }
+        // Eligible jobs were removed and marked running before DB validation.
+        if (jobsToRemoveFromQueue.length > 0) {
             logger.info(`[GenNormal] 🎬 Collected ${batchJobs.length} ${firstJobMode} jobs for batch processing`, {
                 profileId: profileId.substring(0, 8) + '...',
                 jobIds: batchJobs.map(j => j.jobId),
@@ -1087,6 +1117,10 @@ class GenNormalQueueManager {
         // Add jobs to queues
         let jobsAdded = 0;
         for (const job of project.jobs) {
+            if (this.isSubmitting(job.id)) {
+                logger.debug(`[GenNormal] Job ${job.id} is already being submitted; skip queue rebuild`);
+                continue;
+            }
             const queue = this.profileQueues.get(job.profileId);
             if (queue) {
                 // Fix A: determine hasReferenceImages from DB field để getMinGapMsForJob
@@ -1708,6 +1742,10 @@ class GenNormalQueueManager {
             // Submit next job for this profile (ONLY ONE per cycle to ensure proper delay)
             const nextJob = queue.queuedJobs.shift();
             if (nextJob) {
+                if (this.isSubmitting(nextJob.jobId)) {
+                    logger.debug(`[GenNormal] Job ${nextJob.jobId} already has an in-flight submit`);
+                    return;
+                }
                 // Check if job has retry delay (from error field: "RETRY:retryAtISO:errorMessage" or "RATE_LIMIT_RETRY:retryAtISO:errorMessage")
                 const job = await prisma.genNormalJob.findUnique({
                     where: { id: nextJob.jobId },
@@ -1784,6 +1822,7 @@ class GenNormalQueueManager {
                 }
                 // Add job to running set immediately (it's being submitted)
                 queue.runningJobs.add(nextJob.jobId);
+                this.submittingJobs.set(nextJob.jobId, { firstJobId: nextJob.jobId, startedAt: Date.now() });
                 // 🔒 Acquire per-profile submission lock. Chỉ 1 job được ở pha captcha+API/profile.
                 // Job đã submit xong (đang POLL kết quả) vẫn nằm trong runningJobs song song bình thường.
                 queue.isSubmitting = true;
@@ -1816,6 +1855,7 @@ class GenNormalQueueManager {
                         this.handleSubmissionError(error, nextJob, queue, profileId);
                     })
                         .finally(() => {
+                        this.releaseSubmission(nextJob.jobId);
                         if (queue.isSubmitting)
                             queue.isSubmitting = false;
                     });
@@ -1828,6 +1868,7 @@ class GenNormalQueueManager {
                         await this.handleSubmissionError(error, nextJob, queue, profileId);
                     }
                     finally {
+                        this.releaseSubmission(nextJob.jobId);
                         if (queue.isSubmitting)
                             queue.isSubmitting = false;
                     }
@@ -4898,4 +4939,5 @@ class GenNormalQueueManager {
         }
     }
 }
+GenNormalQueueManager.SUBMITTING_GUARD_MAX_MS = 5 * 60 * 1000;
 export const genNormalQueueManager = new GenNormalQueueManager();
