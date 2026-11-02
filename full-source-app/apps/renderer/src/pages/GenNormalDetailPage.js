@@ -532,14 +532,11 @@ const P4 = ({ projectId: t, onBack: s }) => {
             } else {
               const D = bf(A),
                 K = m.userPaygateTier === "PAYGATE_TIER_TWO",
-                ee = m.credits ?? 0,
                 te = K ? "ADVANCED" : "INTERMEDIATE",
                 le = await Me.getVideoModels(D, M, te);
               let fe;
               if (
-                (K
-                  ? (fe = ee < 50 ? le.filter((xe) => xe.isRelaxed) : le)
-                  : (fe = le.filter((xe) => !xe.isRelaxed)),
+                ((fe = K ? le : le.filter((xe) => !xe.isRelaxed)),
                 W(fe),
                 !_ || !fe.find((xe) => xe.key === _))
               ) {
@@ -3273,7 +3270,7 @@ Vui lòng kiểm tra lại các job và thêm đủ ảnh cần thiết.`)
                                 title:
                                   m.credits < 50
                                     ? m.userPaygateTier === "PAYGATE_TIER_TWO"
-                                      ? `Credit thấp (${m.credits}): Hệ thống tự dùng Lite [Lower Priority] miễn phí.`
+                                      ? `Credit thấp (${m.credits}): Bạn vẫn có thể chọn mọi model; hãy kiểm tra phí hiển thị trước khi gen.`
                                       : `Credit thấp (${m.credits}): Tài khoản Pro không có chế độ miễn phí, vui lòng nạp thêm credit.`
                                     : `Credit còn lại: ${m.credits}`,
                                 children: `💎 ${m.credits ?? 0} cr`,
