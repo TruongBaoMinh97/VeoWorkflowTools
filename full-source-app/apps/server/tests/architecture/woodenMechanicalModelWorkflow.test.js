@@ -1,5 +1,9 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { imagePaths } from '../../src/modules/workflow/lib/imageInputs.js';
+import { prepareFolderBatch } from '../../src/modules/workflow/lib/prepareFolderBatch.js';
 import { extractBatchSchema } from '../../src/modules/workflow/workflow.batch.schema.js';
 import { migrateWorkflowDefinition } from '../../src/modules/workflow/versioning/workflowVersioning.js';
 
@@ -27,12 +31,12 @@ describe('wooden mechanical model Etsy workflow preset', () => {
         ]);
     });
 
-    it('treats each reference image as one job while preserving product folders', async () => {
+    it('uses every image in each product subfolder as references for one job', async () => {
         const workflow = await loadWorkflow();
         const [input, , image] = workflow.nodes;
         expect(input.data).toMatchObject({
             batchRole: 'input',
-            groupMode: 'product-images',
+            groupMode: 'subfolders',
             folderPath: expect.any(String),
         });
         expect(image.data).toMatchObject({
@@ -47,6 +51,32 @@ describe('wooden mechanical model Etsy workflow preset', () => {
         ]);
     });
 
+    it('prepares one batch row per product with all of its reference images', async () => {
+        const root = await mkdtemp(path.join(os.tmpdir(), 'wooden-model-workflow-'));
+        try {
+            const workflow = await loadWorkflow();
+            workflow.nodes[0].data.folderPath = root;
+            for (const [product, count] of [['model-1', 6], ['model-2', 8]]) {
+                const folder = path.join(root, product);
+                await mkdir(folder);
+                for (let index = 0; index < count; index++) {
+                    await writeFile(path.join(folder, `${index}.jpg`), 'reference');
+                }
+            }
+            const batch = await prepareFolderBatch(workflow);
+            expect(batch.items).toHaveLength(2);
+            expect(batch.items.map(item => item.productId)).toEqual(['model-1', 'model-2']);
+            expect(batch.items.map(item => imagePaths(item.inputValues['anh-mo-hinh-go']).length))
+                .toEqual([6, 8]);
+            for (const item of batch.items) {
+                expect(imagePaths(item.inputValues['anh-mo-hinh-go']).every(file =>
+                    path.basename(path.dirname(file)) === item.productId)).toBe(true);
+            }
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('keeps the supplied detail, construction, material and fact-preservation rules', async () => {
         const prompt = (await loadWorkflow()).nodes[1].data.prompt;
         expect(prompt).toContain('UNIVERSAL MASTER PROMPT V1.1');
@@ -56,6 +86,7 @@ describe('wooden mechanical model Etsy workflow preset', () => {
         expect(prompt).toContain('Do not turn loose parts into a completed model.');
         expect(prompt).toContain('Preserve every factual value exactly:');
         expect(prompt).toContain('Do not add a fictional brand name.');
-        expect(prompt).toContain('never transfer components, colors, engravings');
+        expect(prompt).toContain('All images in the current product folder depict the same physical model.');
+        expect(prompt).toContain('Use every supplied view to cross-check');
     });
 });
