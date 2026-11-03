@@ -35,6 +35,8 @@ describe('folder image workflow', () => {
     it('creates a separate job per color image inside product folders, including more than eight images', async () => {
         const dir = await temp();
         await mkdir(path.join(dir,'dress-a')); await mkdir(path.join(dir,'dress-b'));
+        await mkdir(path.join(dir,'__MACOSX'));
+        await writeFile(path.join(dir,'__MACOSX','._preview.jpg'),png);
         for (let i=1;i<=10;i++) await writeFile(path.join(dir,'dress-a',`${i}.png`),png);
         await writeFile(path.join(dir,'dress-b','1.png'),png);
         await writeFile(path.join(dir,'root.png'),png);
@@ -45,6 +47,7 @@ describe('folder image workflow', () => {
         expect(scan.products[9].productId).toBe('dress-a/10.png');
         expect(scan.products[10].productId).toBe('dress-b/1.png');
         expect(new Set(scan.products.map(product=>product.productId)).size).toBe(11);
+        expect(scan.warnings).toEqual([]);
     });
     it('rejects disguised non-image files before provider calls', async () => {
         const dir = await temp(), file = path.join(dir, 'bad.png'); await writeFile(file,'not an image');
