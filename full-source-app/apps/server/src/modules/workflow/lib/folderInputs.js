@@ -22,6 +22,7 @@ export async function scanImageFolder(folder, mode = 'files') {
     }
     for (const entry of entries) {
         if (entry.isSymbolicLink()) continue;
+        if (entry.name === '__MACOSX') continue;
         if (mode === 'files' && entry.isFile() && isImage(entry.name))
             await add(entry.name, [path.join(root, entry.name)]);
         if (['subfolders', 'product-images'].includes(mode) && entry.isDirectory()) {
