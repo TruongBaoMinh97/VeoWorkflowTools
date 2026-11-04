@@ -14,6 +14,7 @@ import { refreshProfileAccountInfo } from '../profiles/accountInfo.service.js';
 import { isNonRetryableError, isRetryableError, getFailedJobDisplayMessage, isHardQuotaExhausted, isTransientTrafficLimit } from '../../services/veo3/veo3ErrorHandler.js';
 import { concurrentProfileLimit } from '../../lib/concurrentProfileLimit.js';
 import { captchaManager } from '../../lib/captchaManager.js';
+import { isCaptchaMintError } from '../../lib/captchaMintErrors.js';
 import { sessionIdManager } from '../../lib/sessionIdManager.js';
 import { isVerificationRejected, VERIFICATION_REQUIRED_MESSAGE } from '../../services/veo3/verificationFailure.js';
 import { buildHandleMap, clampTextParts, tokenizePrompt } from '../../utils/referenceHandles.js';
@@ -41,6 +42,12 @@ const ERR_QUOTA_UPGRADEABLE = 'QUOTA_UPGRADEABLE:Profile cần nâng cấp gói 
 // dần theo số lần dính liên tiếp (reset khi submit thành công), thay vì 30-60s của
 // 429 thường vốn quá ngắn để trần này hạ xuống.
 const TRAFFIC_LIMIT_BACKOFF_SEC = [120, 300, 600];
+/** An absent provider error body does not make an otherwise retryable batch terminal. */
+export function isTerminalVideoBatchError(message, error) {
+    return isNonRetryableError(message) ||
+        (typeof error?.errorText === 'string' && error.errorText.length > 0 && isNonRetryableError(error.errorText)) ||
+        error?.isNonRetryable === true;
+}
 export class GenNormalQueueManager {
     constructor() {
         this.profileQueues = new Map();
@@ -78,6 +85,7 @@ export class GenNormalQueueManager {
         // Track consecutive 403 failures per profile for escalating delay
         // Reset to 0 when successful submission
         this.profile403FailureCount = new Map();
+        this.captchaMintFailures = new Map();
         this.profileTrafficLimitStrikes = new Map();
         // Track consecutive HostTimeout failures per profile \u2014 khi Google silent-drop
         // requests (kh\u00f4ng tr\u1ea3 403 nh\u01b0ng API hang), c\u1ea7n force-reset browser.
@@ -687,11 +695,46 @@ export class GenNormalQueueManager {
         }
         return survivors;
     }
+    async requeueCaptchaMintFailure(queuedJob, batchJobs, errorMessage) {
+        const failures = (this.captchaMintFailures.get(queuedJob.profileId) ?? 0) + 1;
+        this.captchaMintFailures.set(queuedJob.profileId, failures);
+        const backoffSeconds = Math.min(20 * failures, 90);
+        const survivors = await this.enforceBatchRetryCeiling(batchJobs, errorMessage);
+        const queue = this.profileQueues.get(queuedJob.profileId);
+        for (const bj of survivors.slice().reverse()) {
+            const detail = await prisma.genNormalJob.findUnique({
+                where: { id: bj.jobId },
+                select: { mode: true, projectId: true, jobIndex: true, retryCount: true },
+            });
+            if (!detail)
+                continue;
+            await prisma.genNormalJob.update({
+                where: { id: bj.jobId },
+                data: { status: 'QUEUED', error: null, progress: 0, retryCount: (detail.retryCount ?? 0) + 1 },
+            });
+            if (queue) {
+                queue.runningJobs.delete(bj.jobId);
+                queue.queuedJobs.unshift({
+                    jobId: bj.jobId,
+                    profileId: bj.profileId,
+                    projectId: detail.projectId,
+                    veo3ProjectId: bj.veo3ProjectId,
+                    index: detail.jobIndex,
+                    mode: detail.mode || bj.mode || 'TEXT_TO_VIDEO',
+                    addedAt: Date.now(),
+                });
+            }
+        }
+        this.setProfileRateLimitDelay(queuedJob.profileId, backoffSeconds, '500');
+        captchaManager.notifyFailure();
+        logger.warn(`[GenNormal] 🔄 Captcha mint lỗi lần ${failures} liên tiếp — ${survivors.length}/${batchJobs.length} jobs xếp lại, profile nghỉ ${backoffSeconds}s`);
+    }
     /**
      * Reset 403 failure count for a profile (called on successful submission)
      * Also resets circuit breaker state
      */
     reset403FailureCount(profileId) {
+        this.captchaMintFailures.delete(profileId);
         this.profileTrafficLimitStrikes.delete(profileId);
         const previous = this.profile403FailureCount.get(profileId) || 0;
         if (previous > 0) {
@@ -1202,6 +1245,7 @@ export class GenNormalQueueManager {
         this.lastBatchTimePerProfile.delete(profileId);
         this.profileProcessingActive.delete(profileId);
         this.profile403FailureCount.delete(profileId);
+        this.captchaMintFailures.delete(profileId);
         this.profile403Timestamps.delete(profileId);
         this.profileSlidingPenaltyUntil.delete(profileId);
         this.profileDelayLogLastAt.delete(profileId);
@@ -1224,6 +1268,7 @@ export class GenNormalQueueManager {
      */
     clearProfileThrottle(profileId) {
         this.profile403FailureCount.delete(profileId);
+        this.captchaMintFailures.delete(profileId);
         this.profile403Timestamps.delete(profileId);
         this.profileHostTimeoutCount.delete(profileId);
         this.profileSlidingPenaltyUntil.delete(profileId);
@@ -2593,7 +2638,8 @@ export class GenNormalQueueManager {
                             errorMessage.includes('Browser was destroyed') ||
                             errorMessage.includes('Browser destroyed before') ||
                             errorMessage.includes('ERR_FAILED (-2)');
-                        const isRecaptchaFailure = !isBrowserRaceErrorImg && (batchError?.isRecaptchaFailure ||
+                        const isCaptchaMintFailure = !isBrowserRaceErrorImg && isCaptchaMintError(errorMessage, batchError);
+                        const isRecaptchaFailure = !isBrowserRaceErrorImg && !isCaptchaMintFailure && (batchError?.isRecaptchaFailure ||
                             errorMessage.includes('reCAPTCHA evaluation failed') ||
                             errorMessage.includes('Xác thực reCAPTCHA thất bại') ||
                             errorMessage.includes('Failed to obtain reCAPTCHA') ||
@@ -2658,6 +2704,9 @@ export class GenNormalQueueManager {
                             }
                             this.setProfileRateLimitDelay(queuedJob.profileId, 3, '403');
                             await this.updateProjectStats(queuedJob.projectId);
+                        }
+                        else if (isCaptchaMintFailure) {
+                            await this.requeueCaptchaMintFailure(queuedJob, batchJobs, errorMessage);
                         }
                         else {
                             // Retryable error - put jobs back to queue with proper status and delay
@@ -3487,16 +3536,15 @@ export class GenNormalQueueManager {
                     // Theo đúng image-batch (dòng ~3000): `errorText` giữ nguyên body gốc của
                     // Google nên vẫn chứa mã PUBLIC_ERROR_* kể cả khi .message đã bị thay
                     // bằng sentinel; cờ isNonRetryable là chốt chặn cuối.
-                    const isNonRetryable = isNonRetryableError(errorMessage) ||
-                        isNonRetryableError(batchError?.errorText ?? '') ||
-                        batchError?.isNonRetryable === true;
+                    const isNonRetryable = isTerminalVideoBatchError(errorMessage, batchError);
                     // Browser race condition errors: browser destroyed while another job was using it.
                     // NOT a real 403 — just retry quickly without rotation.
                     const isBrowserRaceError = errorMessage.includes('Object has been destroyed') ||
                         errorMessage.includes('Browser was destroyed') ||
                         errorMessage.includes('Browser destroyed before') ||
                         errorMessage.includes('ERR_FAILED (-2)');
-                    const isRecaptchaFailure = !isBrowserRaceError && (batchError?.isRecaptchaFailure ||
+                    const isCaptchaMintFailure = !isBrowserRaceError && isCaptchaMintError(errorMessage, batchError);
+                    const isRecaptchaFailure = !isBrowserRaceError && !isCaptchaMintFailure && (batchError?.isRecaptchaFailure ||
                         errorMessage.includes('reCAPTCHA evaluation failed') ||
                         errorMessage.includes('Xác thực reCAPTCHA thất bại') ||
                         errorMessage.includes('Failed to obtain reCAPTCHA') ||
@@ -3513,7 +3561,10 @@ export class GenNormalQueueManager {
                         batchError?.errorText?.includes('PUBLIC_ERROR_USER_REQUESTS_THROTTLED') ||
                         // TOO_MUCH_TRAFFIC: trần tốc độ tạm thời — delay per-profile + retry (cap 3), KHÔNG dừng project.
                         isTransientTrafficLimit(errorMessage, batchError);
-                    if (isRecaptchaFailure) {
+                    if (isCaptchaMintFailure) {
+                        logger.warn(`[GenNormal] ⚠️ Captcha browser không trả token (${batchJobs.length} jobs) — tạm dừng profile rồi thử lại`);
+                    }
+                    else if (isRecaptchaFailure) {
                         logger.warn(`[GenNormal] ⚠️ Batch 403 reCAPTCHA (${batchJobs.length} jobs) — will retry`);
                     }
                     else if (isRateLimit) {
@@ -3566,6 +3617,9 @@ export class GenNormalQueueManager {
                         }
                         this.setProfileRateLimitDelay(queuedJob.profileId, 3, '403');
                         await this.updateProjectStats(queuedJob.projectId);
+                    }
+                    else if (isCaptchaMintFailure) {
+                        await this.requeueCaptchaMintFailure(queuedJob, batchJobs, errorMessage);
                     }
                     else {
                         // Retryable error - put jobs back to queue with proper status and delay
@@ -3863,8 +3917,9 @@ export class GenNormalQueueManager {
                 errorMessage.includes('Browser was destroyed') ||
                 errorMessage.includes('Browser destroyed before') ||
                 errorMessage.includes('ERR_FAILED (-2)');
-            // Real reCAPTCHA failures (403 from Google, token timeout, etc.)
-            const isRecaptchaFailure = !isBrowserRaceErrorSingle && (error?.isRecaptchaFailure ||
+            const isCaptchaMintFailure = !isBrowserRaceErrorSingle && isCaptchaMintError(errorMessage, error);
+            // Flow rejected a token; browser mint failures use a separate retry path.
+            const isRecaptchaFailure = !isBrowserRaceErrorSingle && !isCaptchaMintFailure && (error?.isRecaptchaFailure ||
                 errorMessage.includes('reCAPTCHA evaluation failed') ||
                 errorMessage.includes('Xác thực reCAPTCHA thất bại') ||
                 errorMessage.includes('Failed to obtain reCAPTCHA') ||
@@ -3902,7 +3957,7 @@ export class GenNormalQueueManager {
             // Check if error should NOT be retried (400 content policy, prominent people, etc.)
             // Skip check for reCAPTCHA failures (403) — those have their own retry logic.
             // Also check error.isNonRetryable flag set by veo3Service (backup nếu pattern miss).
-            const isNonRetryable = !isRecaptchaFailure && (isNonRetryableError(errorMessage) || error?.isNonRetryable === true);
+            const isNonRetryable = !isRecaptchaFailure && !isCaptchaMintFailure && (isNonRetryableError(errorMessage) || error?.isNonRetryable === true);
             if (isNonRetryable) {
                 // 🔴 Mark ALL batch jobs as FAILED (not just the first one)
                 const batchJobs = this.currentBatchJobs.get(queuedJob.jobId);
@@ -3946,6 +4001,15 @@ export class GenNormalQueueManager {
                     raceQueue.queuedJobs.push({ jobId: queuedJob.jobId, profileId: queuedJob.profileId, projectId: queuedJob.projectId, veo3ProjectId: queuedJob.veo3ProjectId, index: queuedJob.index, mode: queuedJob.mode || 'TEXT_TO_VIDEO', addedAt: Date.now() });
                 }
                 this.setProfileRateLimitDelay(queuedJob.profileId, 3, '403');
+                await this.updateProjectStats(queuedJob.projectId);
+                return;
+            }
+            if (isCaptchaMintFailure) {
+                const batchJobs = this.currentBatchJobs.get(queuedJob.jobId);
+                const jobsToRetry = batchJobs && batchJobs.length > 1 ? batchJobs : [queuedJob];
+                await this.requeueCaptchaMintFailure(queuedJob, jobsToRetry, errorMessage);
+                if (batchJobs)
+                    this.currentBatchJobs.delete(queuedJob.jobId);
                 await this.updateProjectStats(queuedJob.projectId);
                 return;
             }

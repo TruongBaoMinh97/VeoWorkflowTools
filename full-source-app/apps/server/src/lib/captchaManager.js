@@ -177,6 +177,28 @@ class CaptchaManager {
             return null;
         return this.lastHasFlowTab;
     }
+    async applyPendingCdpReset(when) {
+        const reset = this.consumePendingReset();
+        if (!reset)
+            return;
+        const kind = reset.method;
+        try {
+            await cdpReset(kind);
+            logger.info(`[captcha] cdp ${kind} applied ${when}`);
+        }
+        catch (err) {
+            this.pendingReset = kind;
+            logger.warn(`[captcha] cdp ${kind} failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+    // CDP has no extension poller to drain a reset. Apply it behind any active mint.
+    flushPendingCdpReset() {
+        if (!this.pendingReset || getCaptchaProvider() !== 'cdp')
+            return;
+        void this.mintLock
+            .acquire(() => this.applyPendingCdpReset('immediately'))
+            .catch((err) => logger.warn(`[captcha] immediate reset failed: ${String(err)}`));
+    }
     /**
      * Provider 'cdp': Electron mints directly, so there is no poll queue and no
      * command id. Resets cannot wait for a poller to pick them up either — they
@@ -184,20 +206,7 @@ class CaptchaManager {
      */
     async mintViaCdp(action) {
         const startedAt = Date.now();
-        const reset = this.consumePendingReset();
-        if (reset) {
-            const kind = reset.method;
-            try {
-                await cdpReset(kind);
-                logger.info(`[captcha] cdp ${kind} applied before mint`);
-            }
-            catch (err) {
-                // A failed reset must not eat the mint: reschedule so the ladder keeps
-                // escalating instead of silently forgetting the reset.
-                this.pendingReset = kind;
-                logger.warn(`[captcha] cdp ${kind} failed: ${err instanceof Error ? err.message : String(err)}`);
-            }
-        }
+        await this.applyPendingCdpReset('before mint');
         try {
             const token = await cdpMint(action);
             const durationMs = Date.now() - startedAt;
@@ -249,6 +258,7 @@ class CaptchaManager {
         return { commandId: `reset-${randomUUID()}`, method: kind };
     }
     signalWaiters() {
+        this.flushPendingCdpReset();
         if (this.waiters.length === 0)
             return;
         const reset = this.consumePendingReset();

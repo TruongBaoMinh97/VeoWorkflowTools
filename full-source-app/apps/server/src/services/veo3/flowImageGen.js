@@ -144,7 +144,9 @@ export function classifyImageGenError(err) {
         if (isVerificationRejected(evidence)) {
             return verificationRequiredError(err);
         }
-        return tag(`Flow từ chối quyền truy cập (mã ${status}). Kiểm tra quyền model và phiên đăng nhập trên Google Flow. [${err.message}]`, { code: 'FLOW_PERMISSION_DENIED', isNonRetryable: true }, err);
+        // A bare gRPC 7 or HTTP 403 can be a temporary low-score rejection.
+        // Preserve explicit model-access and verification decisions above.
+        return tag(`Google tạm từ chối request (mã ${status}). Sẽ thử lại với token mới. [${err.message}]`, { isRecaptchaFailure: true }, err);
     }
     if (grpc === GRPC.RESOURCE_EXHAUSTED || status === 429) {
         return tag('Rate limit (Mã 429): Gen quá nhanh, sẽ tự retry sau 30s.', {}, err);

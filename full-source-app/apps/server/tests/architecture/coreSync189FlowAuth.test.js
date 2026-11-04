@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { FLOW_PRODUCT_SLOT, FLOW_RPC } from '../../src/lib/flowBoq.js';
+import { FLOW_PRODUCT_SLOT, FLOW_RPC, FlowRpcError } from '../../src/lib/flowBoq.js';
 import {
   buildGenerateImageArgs,
+  classifyImageGenError,
   resolveAspectCode,
 } from '../../src/services/veo3/flowImageGen.js';
 import {
@@ -56,5 +57,19 @@ describe('Veo3Studio 1.8.9 Flow cookie-auth migration', () => {
     const error = new FlowAuthEndpointRetiredError();
     expect(error.code).toBe('FLOW_AUTH_RETIRED');
     expect(error.message).toContain('HTTP 410');
+  });
+
+  it('retries a bare Flow 403 while keeping explicit permission and verification rejections terminal', () => {
+    const transient = classifyImageGenError(new FlowRpcError('ogiZ0b', 'Google từ chối, mã 7', 7));
+    expect(transient.isRecaptchaFailure).toBe(true);
+    expect(transient.isNonRetryable).not.toBe(true);
+
+    const accessDenied = classifyImageGenError(new FlowRpcError('ogiZ0b', 'PUBLIC_ERROR_MODEL_ACCESS_DENIED', 403));
+    expect(accessDenied.code).toBe('MODEL_ACCESS_DENIED');
+    expect(accessDenied.isNonRetryable).toBe(true);
+
+    const verify = classifyImageGenError(new FlowRpcError('ogiZ0b', 'reCAPTCHA evaluation failed', 403));
+    expect(verify.code).toBe('FLOW_VERIFICATION_REQUIRED');
+    expect(verify.isNonRetryable).toBe(true);
   });
 });
