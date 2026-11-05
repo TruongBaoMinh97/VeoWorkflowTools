@@ -23,7 +23,7 @@ describe('Flow video submission safeguards', () => {
         expect(denied.message).toContain('PUBLIC_ERROR_MODEL_ACCESS_DENIED');
     });
 
-    it('routes only explicit verification evidence to the verification flow', () => {
+    it('keeps explicit verification terminal and retries a bare permission denial', () => {
         const rejected = classifyFlowGenError(new FlowRpcError(
             'YhhmEf',
             'PUBLIC_ERROR_UNUSUAL_ACTIVITY: reCAPTCHA evaluation failed',
@@ -32,8 +32,8 @@ describe('Flow video submission safeguards', () => {
         const unknown = classifyFlowGenError(new FlowRpcError('YhhmEf', 'PERMISSION_DENIED', 7));
 
         expect(rejected).toMatchObject({ code: VERIFICATION_REQUIRED_CODE, isNonRetryable: true });
-        expect(unknown).toMatchObject({ code: 'FLOW_PERMISSION_DENIED', isNonRetryable: true });
-        expect(unknown.isRecaptchaFailure).toBeUndefined();
+        expect(unknown.isRecaptchaFailure).toBe(true);
+        expect(unknown.isNonRetryable).not.toBe(true);
     });
 
     it('claims every video batch member before asynchronous validation', async () => {

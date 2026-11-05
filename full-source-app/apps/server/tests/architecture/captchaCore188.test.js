@@ -9,6 +9,7 @@ import {
     getHostSecChUaPlatform,
     getHostUa,
 } from '../../src/lib/hostChromeUa.js';
+import { isCaptchaMintError } from '../../src/lib/captchaMintErrors.js';
 
 const bridgeMock = vi.hoisted(() => ({
     requestJson: vi.fn(async () => ({ ok: true })),
@@ -54,6 +55,24 @@ function restoreEnv(name, value) {
 }
 
 describe('Veo3Studio 1.8.8 captcha-core sync', () => {
+    it('separates a missing CAPTCHA token from a token rejected by Flow', () => {
+        expect(isCaptchaMintError('Captcha browser lỗi: timeout', { code: 'CAPTCHA_FAILED' })).toBe(true);
+        expect(isCaptchaMintError('Captcha browser trả về token rỗng', { code: 'CAPTCHA_EMPTY' })).toBe(true);
+        expect(isCaptchaMintError('Google từ chối request (PERMISSION_DENIED, mã 7)', { isRecaptchaFailure: true })).toBe(false);
+    });
+
+    it('resets the CDP browser at the failure threshold without waiting for another mint', async () => {
+        const { captchaManager } = await import('../../src/lib/captchaManager.js');
+        captchaManager.notifyFailure();
+        captchaManager.notifyFailure();
+        captchaManager.notifyFailure();
+
+        await vi.waitFor(() => expect(bridgeMock.requestJson).toHaveBeenCalledWith(
+            '/captcha/reset',
+            expect.objectContaining({ body: JSON.stringify({ kind: 'soft_reset' }) }),
+        ));
+        expect(captchaManager.stats().pendingReset).toBeNull();
+    });
     it('persists the selected provider in VeoWorkflow userData and reloads it', async () => {
         const first = await import('../../src/lib/captchaProvider.js');
         expect(first.getCaptchaProvider()).toBe('cdp');

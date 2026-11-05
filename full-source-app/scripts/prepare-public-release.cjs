@@ -3,6 +3,8 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const asar = require(path.join(root, 'desktop-app/node_modules/@electron/asar'));
 const source = path.join(root, 'full-source-app');
+const serverBuild = path.join(source, 'apps/server/dist');
+const rendererBuild = path.join(source, 'apps/renderer/dist');
 const version = require(path.join(source, 'package.json')).version;
 const output = path.join(root, 'dist-releases', version);
 const app = path.join(output, 'app');
@@ -20,8 +22,15 @@ function excluded(file) {
     if (!resume && (fs.existsSync(app) || fs.existsSync(stage))) throw new Error('Release staging already exists; inspect before reusing');
     fs.mkdirSync(output, { recursive: true });
     if (!resume) fs.cpSync(original, app, { recursive: true, filter: file => !excluded(file) });
+    if (!fs.existsSync(path.join(serverBuild, 'index.js')) || !fs.existsSync(path.join(rendererBuild, 'index.html'))) {
+        throw new Error('Build the server and renderer from source before staging a release');
+    }
+    const stagedServerBuild = path.join(app, 'resources/server/dist');
+    if (!stagedServerBuild.startsWith(output + path.sep)) throw new Error('Invalid release server destination');
+    fs.rmSync(stagedServerBuild, { recursive: true, force: true });
+    fs.cpSync(serverBuild, stagedServerBuild, { recursive: true });
     const archive = path.join(app, 'resources/app.asar');
-    if (!resume) asar.extractAll(archive, stage);
+    if (!resume || !fs.existsSync(path.join(stage, 'package.json'))) asar.extractAll(archive, stage);
     let removed = 0;
     function clean(dir) {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -37,6 +46,7 @@ function excluded(file) {
     clean(stage);
     fs.copyFileSync(path.join(source, 'package.json'), path.join(stage, 'package.json'));
     fs.cpSync(path.join(source, 'apps/electron/dist'), path.join(stage, 'apps/electron/dist'), { recursive: true });
+    fs.cpSync(rendererBuild, path.join(stage, 'apps/renderer/dist'), { recursive: true, force: true });
     await asar.createPackage(stage, archive);
     asar.uncache(archive);
     const feed = asar.extractFile(archive, path.join('apps', 'electron', 'dist', 'main', 'privateUpdateAuth.js')).toString();

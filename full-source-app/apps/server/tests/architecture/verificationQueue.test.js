@@ -7,22 +7,48 @@ vi.mock('../../src/modules/genNormal/genNormal.repository.js', () => ({ genNorma
 vi.mock('../../src/utils/profileCookies.js', () => ({ getProfileCookies: vi.fn() }));
 vi.mock('../../src/modules/profiles/accountInfo.service.js', () => ({ refreshProfileAccountInfo: vi.fn() }));
 vi.mock('../../src/lib/concurrentProfileLimit.js', () => ({ concurrentProfileLimit: {} }));
-vi.mock('../../src/lib/captchaManager.js', () => ({ captchaManager: { notifyRecaptchaScoreDead: vi.fn() } }));
+vi.mock('../../src/lib/captchaManager.js', () => ({ captchaManager: { notifyRecaptchaScoreDead: vi.fn(), notifyFailure: vi.fn() } }));
 vi.mock('../../src/lib/sessionIdManager.js', () => ({ sessionIdManager: { reset: vi.fn() } }));
 
 import { prisma } from '../../src/lib/prisma.js';
-import { genNormalQueueManager as manager } from '../../src/modules/genNormal/genNormalQueueManager.js';
+import { captchaManager } from '../../src/lib/captchaManager.js';
+import { genNormalQueueManager as manager, isTerminalVideoBatchError } from '../../src/modules/genNormal/genNormalQueueManager.js';
 import { VERIFICATION_REQUIRED_MESSAGE } from '../../src/services/veo3/verificationFailure.js';
 
 beforeEach(() => {
     vi.clearAllMocks();
     manager.profileQueues.clear();
     manager.currentBatchJobs.clear();
+    manager.captchaMintFailures.clear();
     vi.spyOn(manager, 'updateProjectStats').mockResolvedValue();
 });
 afterEach(() => vi.restoreAllMocks());
 
 describe('verification rejection queue handling', () => {
+    it('keeps a video batch retryable when a transient 429 has no raw error body', () => {
+        expect(isTerminalVideoBatchError('Rate limit (Mã 429): thử lại', { errorText: '' })).toBe(false);
+        expect(isTerminalVideoBatchError('reCAPTCHA tạm lỗi (403)', {})).toBe(false);
+        expect(isTerminalVideoBatchError('PUBLIC_ERROR_MODEL_ACCESS_DENIED', { errorText: '' })).toBe(true);
+    });
+    it('requeues a missing-token job with a profile delay and browser recovery signal', async () => {
+        const queued = { jobId: 'job-a', profileId: 'profile-a', projectId: 'project-a', mode: 'IMAGE_GENERATION' };
+        const queue = { runningJobs: new Set(['job-a']), queuedJobs: [] };
+        manager.profileQueues.set('profile-a', queue);
+        prisma.genNormalJob.findUnique.mockResolvedValue({ retryCount: 0, maxRetries: 3, mode: 'IMAGE_GENERATION', projectId: 'project-a', jobIndex: 1 });
+
+        await manager.requeueCaptchaMintFailure(queued, [queued], 'Captcha browser trả về token rỗng');
+
+        expect(prisma.genNormalJob.update).toHaveBeenCalledWith({
+            where: { id: 'job-a' },
+            data: { status: 'QUEUED', error: null, progress: 0, retryCount: 1 },
+        });
+        expect(queue.runningJobs.size).toBe(0);
+        expect(queue.queuedJobs).toEqual([expect.objectContaining({ jobId: 'job-a', mode: 'IMAGE_GENERATION' })]);
+        expect(queue.rateLimitType).toBe('500');
+        expect(queue.rateLimitUntil).toBeGreaterThan(Date.now() + 19_000);
+        expect(manager.profile403FailureCount.get('profile-a')).toBeUndefined();
+        expect(captchaManager.notifyFailure).toHaveBeenCalledOnce();
+    });
     it('stops a single rejected submission without reset, retry or prompt rewriting', async () => {
         const queued = { jobId: 'job-a', profileId: 'profile-a', projectId: 'project-a' };
         const rejection = Object.assign(new Error('provider rejected'), {
