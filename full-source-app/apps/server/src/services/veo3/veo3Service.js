@@ -832,10 +832,11 @@ export class Veo3Service {
         // reCAPTCHA is bound to the project page the browser loads.
         this.updateConfig({ veo3ProjectId: projectId });
         const count = request.requests.length;
-        const tokens = await this.requestRecaptchaTokens("VIDEO_GENERATION", count);
-        if (tokens.length < count) {
-            throw new Error(`Batch tokens insufficient for video: got ${tokens.length}, need ${count}`);
-        }
+        // Keep only the first token in flight. A token minted for a later row can
+        // expire while earlier Flow calls are still running.
+        const [firstToken] = await this.requestRecaptchaTokens("VIDEO_GENERATION", 1);
+        if (!firstToken)
+            throw new Error("Flow không lấy được reCAPTCHA token cho video");
         if (onRecaptchaComplete) {
             try {
                 await onRecaptchaComplete();
@@ -845,6 +846,7 @@ export class Veo3Service {
             }
         }
         const operations = [];
+        const failedItems = [];
         for (let i = 0; i < count; i++) {
             const item = request.requests[i];
             const prompt = item.textInput.prompt ?? (item.textInput.structuredPrompt?.parts ?? []).map((p) => p.text).join("");
@@ -864,9 +866,9 @@ export class Veo3Service {
                 if (!verified)
                     logger.warn(`[Video] thử khoá model ${key} (từ ${item.videoModelKey}) — chưa kiểm chứng với Flow`);
                 // The pre-minted token serves the very first send only; every later send needs a new one.
-                let premintConsumed = c > 0;
+                let premintConsumed = i > 0 || c > 0;
                 const buildArgs = async () => {
-                    const recaptchaToken = premintConsumed ? (await this.requestRecaptchaTokens("VIDEO_GENERATION", 1))[0] : tokens[i];
+                    const recaptchaToken = premintConsumed ? (await this.requestRecaptchaTokens("VIDEO_GENERATION", 1))[0] : firstToken;
                     premintConsumed = true;
                     return buildVideoSubmitArgs({
                         mode,
@@ -898,23 +900,40 @@ export class Veo3Service {
                         logger.warn(`[Video] Flow từ chối khoá ${key} (mã ${err.status}) — thử khoá kế tiếp`);
                         continue;
                     }
+                    if (err instanceof FlowRpcError)
+                        logger.warn(`[Video] ${mode} request ${i + 1}/${count} lỗi gốc từ Flow: status=${err.status} ${err.message.slice(0, 300)}`);
                     const classified = classifyFlowGenError(err);
                     logger.error(`❌ [Video] ${mode} request ${i + 1}/${count} lỗi: ${classified?.message ?? classified}`, {
                         model: key,
                         project: projectId,
                     });
-                    throw classified;
+                    if (operations.length === 0)
+                        throw classified;
+                    failedItems.push({ sceneId: item.metadata?.sceneId ?? "", error: classified });
+                    for (const remaining of request.requests.slice(i + 1))
+                        failedItems.push({ sceneId: remaining.metadata?.sceneId ?? "" });
+                    return { operations, failedItems };
                 }
             }
             rememberAcceptedKey(slot, usedKey);
-            const parsed = parseVideoSubmitResponse(payload);
-            if (parsed.operations.length === 0) {
-                throw new Error(`Flow không trả operation cho video: ${JSON.stringify(payload)?.slice(0, 160)}`);
+            let parsed;
+            try {
+                parsed = parseVideoSubmitResponse(payload);
+                if (parsed.operations.length === 0)
+                    throw new Error(`Flow không trả operation cho video: ${JSON.stringify(payload)?.slice(0, 160)}`);
+            }
+            catch (error) {
+                if (operations.length === 0)
+                    throw error;
+                failedItems.push({ sceneId: item.metadata?.sceneId ?? "", error });
+                for (const remaining of request.requests.slice(i + 1))
+                    failedItems.push({ sceneId: remaining.metadata?.sceneId ?? "" });
+                return { operations, failedItems };
             }
             const sceneId = item.metadata?.sceneId ?? "";
             operations.push(...this.convertMediaArrayToSubmitOperations(parsed.operations.map((o) => ({ name: o.operationId, projectId, workflowId: o.workflowId })), sceneId));
         }
-        return { operations };
+        return { operations, failedItems };
     }
     /**
      * Submit video generation (text-to-video) through Flow's `generateVideoText` batchexecute rpc

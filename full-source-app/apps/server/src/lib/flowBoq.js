@@ -133,7 +133,9 @@ const bootstrapInFlight = new Map();
  */
 const reqIdByProfile = new Map();
 function nextReqId(profileId) {
-    const next = (reqIdByProfile.get(profileId) ?? Math.floor(Math.random() * 900000) + 100000) + 100;
+    const step = 100000;
+    const start = (Math.floor(Math.random() * 90) + 10) * step + Math.floor(Math.random() * 90000) + 10000;
+    const next = (reqIdByProfile.get(profileId) ?? start - step) + step;
     reqIdByProfile.set(profileId, next);
     return next;
 }
@@ -236,6 +238,7 @@ async function getSession(profileId, userAgent) {
     const promise = bootstrapSession(profileId, userAgent)
         .then((session) => {
         sessionByProfile.set(profileId, session);
+        reqIdByProfile.delete(profileId);
         return session;
     })
         .finally(() => bootstrapInFlight.delete(profileId));
@@ -314,7 +317,8 @@ export function parseBatchExecute(body, rpcid) {
         const status = Array.isArray(answer[5]) ? answer[5][0] : undefined;
         if (typeof status === 'number') {
             const name = GRPC_STATUS[status];
-            throw new FlowRpcError(rpcid, `Google từ chối, mã ${status}${name ? ` (${name})` : ''}`, status);
+            const details = answer[5].slice(1);
+            throw new FlowRpcError(rpcid, `Google từ chối, mã ${status}${name ? ` (${name})` : ''}${details.length ? `: ${JSON.stringify(details).slice(0, 300)}` : ''}`, status);
         }
         return null;
     }
@@ -415,16 +419,16 @@ const SKU_BY_CODE = { 3: 'G1_TIER2' };
  * onto the shape the aisandbox-pa `/credits` endpoint used to return.
  */
 export function parseCreditsPayload(payload) {
-    if (!Array.isArray(payload) || typeof payload[0] !== 'number') {
+    if (!Array.isArray(payload) || (typeof payload[0] !== 'number' && !(payload[0] == null && typeof payload[1] === 'number'))) {
         throw new FlowRpcError(FLOW_RPC.credits, `payload credits không hợp lệ: ${JSON.stringify(payload)?.slice(0, 120)}`);
     }
     const lookup = (table, code) => typeof code === 'number' ? (table[code] ?? '') : '';
     return {
-        credits: payload[0],
+        credits: payload[0] ?? 0,
         userPaygateTier: lookup(PAYGATE_TIER_BY_CODE, payload[1]),
         serviceTier: lookup(SERVICE_TIER_BY_CODE, payload[2]),
         sku: lookup(SKU_BY_CODE, payload[3]),
-        ...(typeof payload[5] === 'number' ? { subscriptionCredits: payload[5] } : {}),
+        subscriptionCredits: typeof payload[5] === 'number' ? payload[5] : 0,
     };
 }
 const SIGN_IN_CACHE_MS = 5 * 60000;

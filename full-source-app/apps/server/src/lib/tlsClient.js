@@ -1,5 +1,5 @@
 /**
- * TLS-impersonated HTTP client (Chrome 131 PSK profile).
+ * TLS-impersonated HTTP client (Chrome 152 PSK profile).
  *
  * Wraps `node-tls-client` (bogdanfinn/tls-client Go binary). JA3 / JA4 / HTTP/2
  * frame ordering match real Chrome — required because Google reCAPTCHA
@@ -7,10 +7,8 @@
  * 403 PUBLIC_ERROR_UNUSUAL_ACTIVITY even when the captcha token itself is high
  * score.
  *
- * Verified JA3 hash on this build (tls.peet.ws):
- *   a19ab9f02aacf42deddc1f2acb3d3f63
- *   JA4: t13d1516h2_8daaf6152771_02713d6af862
- *   HTTP/2 (ALPN h2)
+ * Fingerprint values depend on the selected TLS_CLIENT_PROFILE and native
+ * library version; verify them again when preparing a packaged release.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { logger } from './logger.js';
@@ -19,6 +17,17 @@ const sessionByProfile = new Map();
 const requestCountByProfile = new Map();
 let initTLSPromise = null;
 let TlsLib = null;
+const DEFAULT_TLS_PROFILE = 'chrome_152_psk';
+function tlsProfileName() {
+    return process.env.TLS_CLIENT_PROFILE || DEFAULT_TLS_PROFILE;
+}
+function resolveClientIdentifier(lib) {
+    const name = tlsProfileName();
+    const identifier = lib.ClientIdentifier[name];
+    if (!identifier)
+        throw new Error(`node-tls-client does not support TLS_CLIENT_PROFILE=${name}`);
+    return identifier;
+}
 function getPreventiveRecycleThreshold() {
     const raw = process.env.VEO3_PREVENTIVE_TLS_RECYCLE_THRESHOLD;
     if (raw == null || raw === '')
@@ -39,7 +48,7 @@ async function ensureTlsReady() {
     if (!initTLSPromise) {
         initTLSPromise = (async () => {
             await TlsLib.initTLS();
-            logger.info('[TlsClient] Initialised node-tls-client (chrome_131_PSK)');
+            logger.info(`[TlsClient] Initialised node-tls-client (${tlsProfileName()})`);
         })().catch((err) => {
             initTLSPromise = null;
             throw err;
@@ -96,7 +105,7 @@ async function getSession(profileId, proxyUrl) {
     if (!s) {
         s = new lib.Session({
             sessionId: `veo3-${profileId.slice(0, 12)}`,
-            clientIdentifier: lib.ClientIdentifier.chrome_131_psk,
+            clientIdentifier: resolveClientIdentifier(lib),
             timeout: 180000,
             randomTlsExtensionOrder: false,
             // proxy may change between calls (rotation); we set it on the session
