@@ -571,6 +571,10 @@ export class GenNormalQueueManager {
             return 2;
         return Math.floor(parsed);
     }
+    getRecaptchaMaxRetries() {
+        const configured = Number(process.env.VEO3_RECAPTCHA_MAX_RETRIES);
+        return Number.isInteger(configured) && configured > 0 ? configured : 12;
+    }
     /**
      * Return the configured delay verbatim. The previous default added ±2s
      * jitter to mask the cadence, but that contradicted the user's UI value
@@ -728,6 +732,66 @@ export class GenNormalQueueManager {
         this.setProfileRateLimitDelay(queuedJob.profileId, backoffSeconds, '500');
         captchaManager.notifyFailure();
         logger.warn(`[GenNormal] 🔄 Captcha mint lỗi lần ${failures} liên tiếp — ${survivors.length}/${batchJobs.length} jobs xếp lại, profile nghỉ ${backoffSeconds}s`);
+    }
+    /** Retry only rows for which Flow never returned an operation. */
+    async requeueUnsubmittedVideoJobs(sceneIdToJobMap, failedItems) {
+        if (!failedItems?.length)
+            return;
+        const firstError = failedItems.find((item) => item.error)?.error;
+        const message = firstError?.message ?? String(firstError ?? 'Flow chưa nhận video');
+        const isCaptchaMint = isCaptchaMintError(message, firstError);
+        const isCaptchaReject = !isCaptchaMint && (firstError?.isRecaptchaFailure || /reCAPTCHA evaluation failed|Xác thực reCAPTCHA thất bại/i.test(message));
+        const isRateLimit = !isCaptchaReject && /429|rate limit|RESOURCE_EXHAUSTED|PUBLIC_ERROR_(USER_REQUESTS_THROTTLED|HIGH_TRAFFIC)/i.test(message);
+        const terminal = isTerminalVideoBatchError(message, firstError) || isVerificationRejected(firstError);
+        const terminalForAll = isVerificationRejected(firstError) || /MODEL_ACCESS_DENIED|PER_MODEL_DAILY_QUOTA|USER_QUOTA_REACHED/.test(message);
+        const profileId = sceneIdToJobMap.get(failedItems[0].sceneId)?.queuedJob?.profileId;
+        const delaySeconds = isCaptchaMint ? 20 : isCaptchaReject ? Math.max(25, this.getRecaptchaSilentRetryDelaySec()) : isRateLimit && profileId ? this.getRateLimitDelaySec(profileId, message, firstError) : 10;
+        const seen = new Set();
+        for (const item of failedItems.slice().reverse()) {
+            if (!item.sceneId || seen.has(item.sceneId))
+                continue;
+            seen.add(item.sceneId);
+            const matched = sceneIdToJobMap.get(item.sceneId);
+            if (!matched)
+                continue;
+            const { queuedJob, job } = matched;
+            const queue = this.profileQueues.get(queuedJob.profileId);
+            const current = await prisma.genNormalJob.findUnique({
+                where: { id: job.id },
+                select: { status: true, retryCount: true, maxRetries: true, mode: true, projectId: true, jobIndex: true },
+            });
+            if (!current || ['CANCELLED', 'FAILED', 'COMPLETED'].includes(current.status)) {
+                queue?.runningJobs.delete(queuedJob.jobId);
+                continue;
+            }
+            const retryCount = (current.retryCount ?? 0) + 1;
+            const maxRetries = isCaptchaReject ? this.getRecaptchaMaxRetries() : isRateLimit ? 3 : current.maxRetries ?? 10;
+            const failThisItem = (terminal && (item.error || terminalForAll)) || retryCount > maxRetries;
+            if (failThisItem) {
+                await prisma.genNormalJob.update({
+                    where: { id: job.id },
+                    data: { status: 'FAILED', error: isVerificationRejected(firstError) ? VERIFICATION_REQUIRED_MESSAGE : message, completedAt: new Date() },
+                });
+            }
+            else {
+                await prisma.genNormalJob.update({
+                    where: { id: job.id },
+                    data: { status: 'QUEUED', error: null, progress: 0, retryCount },
+                });
+                queue?.queuedJobs.unshift({
+                    jobId: job.id, profileId: queuedJob.profileId, projectId: current.projectId,
+                    veo3ProjectId: queuedJob.veo3ProjectId, index: current.jobIndex,
+                    mode: current.mode || queuedJob.mode || 'TEXT_TO_VIDEO', addedAt: Date.now(),
+                });
+            }
+            queue?.runningJobs.delete(queuedJob.jobId);
+        }
+        if (profileId && !terminal) {
+            this.setProfileRateLimitDelay(profileId, delaySeconds, isCaptchaReject ? '403' : isRateLimit ? '429' : '500');
+            if (isCaptchaMint || isCaptchaReject)
+                captchaManager.notifyFailure();
+        }
+        logger.warn(`[GenNormal] Video batch partially submitted: ${failedItems.length} rows not accepted; ${message.slice(0, 160)}`);
     }
     /**
      * Reset 403 failure count for a profile (called on successful submission)
@@ -2713,17 +2777,17 @@ export class GenNormalQueueManager {
                             const queue = this.profileQueues.get(queuedJob.profileId);
                             if (isRateLimit || isRecaptchaFailure) {
                                 const errorType = isRecaptchaFailure ? '403' : '429';
-                                const RATE_LIMIT_MAX_RETRIES = 3;
+                                const RATE_LIMIT_MAX_RETRIES = isRecaptchaFailure ? this.getRecaptchaMaxRetries() : 3;
                                 let delaySeconds;
                                 if (isRecaptchaFailure) {
                                     const failureCount = this.increment403FailureCount(queuedJob.profileId);
                                     const isSilentRetry = failureCount <= 3;
                                     if (isSilentRetry) {
-                                        delaySeconds = this.getRecaptchaSilentRetryDelaySec();
+                                        delaySeconds = Math.max(25, this.getRecaptchaSilentRetryDelaySec());
                                         logger.warn(`[GenNormal] 🔄 Silent reCAPTCHA retry #${failureCount}/3 (image batch) for profile ${queuedJob.profileId.substring(0, 8)}... - retrying in ${delaySeconds}s without notifying user`);
                                     }
                                     else {
-                                        delaySeconds = this.getEscalatingDelay(queuedJob.profileId);
+                                        delaySeconds = Math.max(25, this.getEscalatingDelay(queuedJob.profileId));
                                         logger.warn(`[GenNormal] ⚠️ reCAPTCHA failed ${failureCount} times (image batch), escalating delay to ${delaySeconds}s and notifying user`);
                                     }
                                     if (failureCount >= 3) {
@@ -3626,17 +3690,17 @@ export class GenNormalQueueManager {
                         const queue = this.profileQueues.get(queuedJob.profileId);
                         if (isRateLimit || isRecaptchaFailure) {
                             const errorType = isRecaptchaFailure ? '403' : '429';
-                            const RATE_LIMIT_MAX_RETRIES = 3;
+                            const RATE_LIMIT_MAX_RETRIES = isRecaptchaFailure ? this.getRecaptchaMaxRetries() : 3;
                             let delaySeconds;
                             if (isRecaptchaFailure) {
                                 const failureCount = this.increment403FailureCount(queuedJob.profileId);
                                 const isSilentRetry = failureCount <= 3;
                                 if (isSilentRetry) {
-                                    delaySeconds = this.getRecaptchaSilentRetryDelaySec();
+                                    delaySeconds = Math.max(25, this.getRecaptchaSilentRetryDelaySec());
                                     logger.warn(`[GenNormal] 🔄 Silent reCAPTCHA retry #${failureCount}/3 (batch) for profile ${queuedJob.profileId.substring(0, 8)}... - retrying in ${delaySeconds}s without notifying user`);
                                 }
                                 else {
-                                    delaySeconds = this.getEscalatingDelay(queuedJob.profileId);
+                                    delaySeconds = Math.max(25, this.getEscalatingDelay(queuedJob.profileId));
                                     logger.warn(`[GenNormal] ⚠️ reCAPTCHA failed ${failureCount} times (batch), escalating delay to ${delaySeconds}s and notifying user`);
                                 }
                                 if (failureCount >= 3 && this.shouldRunRecovery(queuedJob.profileId, 'rotate-ua-batch')) {
@@ -3871,7 +3935,9 @@ export class GenNormalQueueManager {
                 // ✅ Reset 403 failure counter — captcha worked, profile is healthy.
                 // Without this, the count from a previous failed run carries over and
                 // the next batch starts already in penalty territory.
-                if (matchedCount > 0) {
+                if (batchResponse.failedItems?.length && unmatchedCount === 0)
+                    await this.requeueUnsubmittedVideoJobs(sceneIdToJobMap, batchResponse.failedItems);
+                if (matchedCount > 0 && !batchResponse.failedItems?.length) {
                     this.reset403FailureCount(job.profileId);
                     captchaManager.notifySuccess();
                 }

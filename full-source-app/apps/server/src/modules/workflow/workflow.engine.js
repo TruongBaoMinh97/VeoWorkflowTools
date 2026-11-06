@@ -1025,9 +1025,10 @@ export class WorkflowEngine extends EventEmitter {
                 const batchId = randomUUID();
                 const tier = await this.resolveUserPaygateTier(provider);
                 let operations;
+                let incompleteVideoItems = [];
                 switch (videoMode) {
                     case 'text-to-video': {
-                        const res = await provider.batchAsyncGenerateVideoText({
+                        const res = await this.submitWorkflowVideoBatch(provider, 'batchAsyncGenerateVideoText', {
                             clientContext: this.buildClientContext(projectId, tier),
                             requests: Array.from({ length: count }, () => ({
                                 textInput: { prompt },
@@ -1042,6 +1043,7 @@ export class WorkflowEngine extends EventEmitter {
                             },
                         });
                         operations = res.operations;
+                        incompleteVideoItems = res.failedItems;
                         break;
                     }
                     case 'image-to-video': {
@@ -1051,7 +1053,7 @@ export class WorkflowEngine extends EventEmitter {
                         if (!startMediaId) {
                             throw new Error('generate-video (image-to-video): no image input connected — connect an image node');
                         }
-                        const res = await provider.batchAsyncGenerateVideoStartImage({
+                        const res = await this.submitWorkflowVideoBatch(provider, 'batchAsyncGenerateVideoStartImage', {
                             clientContext: this.buildClientContext(projectId, tier),
                             requests: Array.from({ length: count }, () => ({
                                 textInput: { prompt },
@@ -1064,6 +1066,7 @@ export class WorkflowEngine extends EventEmitter {
                             mediaGenerationContext: { batchId },
                         });
                         operations = res.operations;
+                        incompleteVideoItems = res.failedItems;
                         break;
                     }
                     case 'reference-to-video': {
@@ -1076,7 +1079,7 @@ export class WorkflowEngine extends EventEmitter {
                         if (refIds.length === 0) {
                             throw new Error('generate-video (reference-to-video): no reference image inputs connected');
                         }
-                        const res = await provider.batchAsyncGenerateVideoReferenceImages({
+                        const res = await this.submitWorkflowVideoBatch(provider, 'batchAsyncGenerateVideoReferenceImages', {
                             clientContext: this.buildClientContext(projectId, tier),
                             requests: Array.from({ length: count }, () => ({
                                 textInput: { prompt },
@@ -1089,6 +1092,7 @@ export class WorkflowEngine extends EventEmitter {
                             mediaGenerationContext: { batchId },
                         });
                         operations = res.operations;
+                        incompleteVideoItems = res.failedItems;
                         break;
                     }
                     case 'frame-to-frame': {
@@ -1105,7 +1109,7 @@ export class WorkflowEngine extends EventEmitter {
                             // start+end endpoint requires BOTH frames (else 400 INVALID_ARGUMENT),
                             // and it needs the i2v model family, not the interpolation key.
                             const i2vModelKey = resolveVideoModelForMode('image-to-video', rawVideoRatio, storedModel, durationSec);
-                            const res = await provider.batchAsyncGenerateVideoStartImage({
+                            const res = await this.submitWorkflowVideoBatch(provider, 'batchAsyncGenerateVideoStartImage', {
                                 clientContext: this.buildClientContext(projectId, tier),
                                 requests: Array.from({ length: count }, () => ({
                                     textInput: { prompt },
@@ -1118,9 +1122,10 @@ export class WorkflowEngine extends EventEmitter {
                                 mediaGenerationContext: { batchId },
                             });
                             operations = res.operations;
+                            incompleteVideoItems = res.failedItems;
                             break;
                         }
-                        const res = await provider.batchAsyncGenerateVideoStartAndEndImage({
+                        const res = await this.submitWorkflowVideoBatch(provider, 'batchAsyncGenerateVideoStartAndEndImage', {
                             clientContext: this.buildClientContext(projectId, tier),
                             requests: Array.from({ length: count }, () => ({
                                 textInput: { prompt },
@@ -1134,13 +1139,14 @@ export class WorkflowEngine extends EventEmitter {
                             mediaGenerationContext: { batchId },
                         });
                         operations = res.operations;
+                        incompleteVideoItems = res.failedItems;
                         break;
                     }
                     default:
                         throw new Error(`generate-video: unknown videoMode '${videoMode}' — expected text-to-video | image-to-video | reference-to-video | frame-to-frame`);
                 }
                 const results = await this.pollMultipleVideos(provider, operations);
-                return { results };
+                return { results, ...(incompleteVideoItems.length ? { incompleteVideoItems } : {}) };
             }
             // ── upscale-image ─────────────────────────────────────────────────────
             case 'upscale-image': {
@@ -1427,6 +1433,46 @@ export class WorkflowEngine extends EventEmitter {
         }
         // 4) CAUS… / undecodable.
         return null;
+    }
+    /** Keep accepted operations while retrying only scene IDs Flow never received. */
+    async submitWorkflowVideoBatch(provider, method, request) {
+        const operations = [];
+        let pending = request.requests;
+        let failedItems = [];
+        for (let attempt = 0; attempt < 3 && pending.length; attempt++) {
+            if (attempt > 0) {
+                const message = failedItems.find((item) => item.error)?.error?.message ?? '';
+                const delayMs = /429|rate limit|reCAPTCHA|captcha/i.test(message) ? 25000 : 10000;
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
+            }
+            let response;
+            try {
+                response = await provider[method]({ ...request, requests: pending });
+            }
+            catch (error) {
+                if (!operations.length)
+                    throw error;
+                failedItems = pending.map((item) => ({ sceneId: item.metadata?.sceneId, error }));
+                break;
+            }
+            operations.push(...(response.operations ?? []));
+            const accepted = new Set(operations.map((operation) => operation.sceneId));
+            const failed = new Map((response.failedItems ?? []).map((item) => [item.sceneId, item]));
+            const ambiguous = pending.filter((item) => !accepted.has(item.metadata?.sceneId) && !failed.has(item.metadata?.sceneId));
+            if (ambiguous.length) {
+                failedItems = ambiguous.map((item) => ({ sceneId: item.metadata?.sceneId, error: new Error('Flow không xác nhận trạng thái gửi video; cần kiểm tra trước khi thử lại') }));
+                break;
+            }
+            pending = pending.filter((item) => failed.has(item.metadata?.sceneId) && !accepted.has(item.metadata?.sceneId));
+            failedItems = pending.map((item) => failed.get(item.metadata?.sceneId));
+            const error = failedItems.find((item) => item.error)?.error;
+            if (error?.isNonRetryable || /MODEL_ACCESS_DENIED|VERIFICATION_REQUIRED/i.test(error?.message ?? ''))
+                break;
+        }
+        return {
+            operations,
+            failedItems: failedItems.map((item) => ({ sceneId: item.sceneId, error: item.error?.message ?? 'Flow chưa nhận video' })),
+        };
     }
     /**
      * Poll a set of video generation operations until all reach a terminal status.

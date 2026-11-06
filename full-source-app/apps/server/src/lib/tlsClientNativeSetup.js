@@ -21,6 +21,7 @@
  * best-effort: on any failure we leave node-tls-client to its own download path.
  */
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,18 +31,31 @@ const __dirname = path.dirname(__filename);
 // Electron sets process.resourcesPath on the spawned server child (it runs via
 // ELECTRON_RUN_AS_NODE); plain Node leaves it undefined.
 const electronProcess = process;
+const require = createRequire(import.meta.url);
+function nodeTlsClientVersion() {
+    try {
+        return require('node-tls-client/package.json').version ?? null;
+    }
+    catch {
+        return null;
+    }
+}
 /**
  * The exact filename node-tls-client's `LibraryHandler.retrieveFileInfo()` loads
  * from `os.tmpdir()` for the current platform/arch. MUST stay in sync with
  * node-tls-client (see its `dist/utils/native.js`).
  */
 function tmpLibFileName() {
+    const version = nodeTlsClientVersion();
+    if (!version)
+        return null;
     const map = {
-        win32: { x64: 'tls-client-64.dll', ia32: 'tls-client-32.dll' },
-        darwin: { arm64: 'tls-client-arm64.dylib', x64: 'tls-client-x86.dylib' },
-        linux: { x64: 'tls-client-x64.so', arm64: 'tls-client-arm64.so' },
+        win32: { x64: 'windows-amd64.dll', ia32: 'windows-386.dll' },
+        darwin: { arm64: 'darwin-arm64.dylib', x64: 'darwin-amd64.dylib' },
+        linux: { x64: 'linux-amd64.so', arm64: 'linux-arm64.so' },
     };
-    return map[process.platform]?.[process.arch] ?? null;
+    const platformName = map[process.platform]?.[process.arch];
+    return platformName ? `tls-client-${version}-${platformName}` : null;
 }
 /** Locate the bundled lib across packaged (resources) and dev layouts. */
 function findBundledLib(fileName) {
