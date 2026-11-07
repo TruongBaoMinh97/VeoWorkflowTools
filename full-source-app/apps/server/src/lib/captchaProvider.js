@@ -78,9 +78,14 @@ async function callBridge(path, init) {
         return await electronBrowserBridge.requestJson(path, init);
     }
     catch (err) {
+        const upstream = err?.details?.body;
+        const disconnected = err?.code === 'BROWSER_BRIDGE_UNREACHABLE';
+        const sdkUnavailable = /GRECAPTCHA_UNAVAILABLE|Không tải được reCAPTCHA Enterprise/.test(upstream?.error ?? err?.message ?? '');
         throw new CaptchaError(
-            `Không gọi được Electron để xử lý captcha: ${err instanceof Error ? err.message : String(err)}`,
-            { code: 'CAPTCHA_BRIDGE_UNREACHABLE', retryable: true },
+            disconnected
+                ? `Không kết nối được Electron để xử lý captcha: ${err instanceof Error ? err.message : String(err)}`
+                : `Captcha browser không lấy được token: ${upstream?.error ?? (err instanceof Error ? err.message : String(err))}`,
+            { code: disconnected ? 'CAPTCHA_BRIDGE_UNREACHABLE' : sdkUnavailable ? 'CAPTCHA_SDK_UNAVAILABLE' : 'CAPTCHA_MINT_FAILED', retryable: true },
         );
     }
 }

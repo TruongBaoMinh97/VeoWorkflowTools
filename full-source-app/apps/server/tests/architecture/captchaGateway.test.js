@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CaptchaGateway } from '../../src/integrations/captcha/CaptchaGateway.js';
+import { cdpMint } from '../../src/lib/captchaProvider.js';
+import { electronBrowserBridge } from '../../src/integrations/browser/ElectronBrowserBridge.js';
+import { IntegrationError } from '../../src/contracts/integration.js';
 
 function createManager(overrides = {}) {
     return {
@@ -11,6 +14,24 @@ function createManager(overrides = {}) {
 }
 
 describe('CaptchaGateway', () => {
+    it('reports an SDK failure as a mint error instead of a disconnected bridge', async () => {
+        const request = vi.spyOn(electronBrowserBridge, 'requestJson').mockRejectedValueOnce(
+            new IntegrationError('BROWSER_BRIDGE_REQUEST_FAILED', 'GRECAPTCHA_UNAVAILABLE', {
+                retryable: true,
+                details: { status: 502, body: { code: 'MINT_FAILED', error: 'GRECAPTCHA_UNAVAILABLE: no execute' } },
+            }),
+        );
+        try {
+            await expect(cdpMint('IMAGE_GENERATION')).rejects.toMatchObject({
+                code: 'CAPTCHA_SDK_UNAVAILABLE',
+                retryable: true,
+            });
+        }
+        finally {
+            request.mockRestore();
+        }
+    });
+
     it('normalizes CDP readiness', async () => {
         const gateway = new CaptchaGateway({
             manager: createManager(),

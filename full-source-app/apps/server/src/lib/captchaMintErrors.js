@@ -4,5 +4,7 @@ export function isCaptchaMintError(message, error) {
         error?.code === 'CAPTCHA_FAILED' ||
         error?.code === 'CAPTCHA_EMPTY' ||
         error?.code === 'CAPTCHA_TIMEOUT' ||
+        error?.code === 'CAPTCHA_SDK_UNAVAILABLE' ||
+        error?.code === 'CAPTCHA_MINT_FAILED' ||
         error?.code === 'CAPTCHA_BRIDGE_UNREACHABLE');
 }

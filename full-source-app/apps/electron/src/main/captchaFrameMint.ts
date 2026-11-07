@@ -18,11 +18,9 @@ type RecaptchaGlobal = typeof globalThis & {
 };
 
 /**
- * Use only the reCAPTCHA Enterprise API already installed by the Flow page.
- *
- * This intentionally does not inject enterprise.js, patch browser globals, or
- * suppress Google's integrity/anti-abuse checks. It simply locates the frame
- * that owns the page-provided execute function and asks that frame to run it.
+ * Locate a frame with reCAPTCHA Enterprise and use its execute function. The
+ * browser manager loads Google's SDK on the Flow landing page when it is absent;
+ * this scanner never modifies frames itself.
  */
 export async function tryMintCaptchaFromFrames(
   frames: CaptchaFrameLike[],
