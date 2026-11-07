@@ -110,6 +110,14 @@ export async function registerCaptchaBridgeRoutes(app) {
             return;
         reply.send({ ok: true, provider: getCaptchaProvider() });
     });
+    // The existing Electron IPC mint endpoint passes only the action. Expose the
+    // profile associated with its serialized request so Electron can mint inside
+    // that account's signed-in Chrome session. Never expose cookies or tokens.
+    app.get('/api/internal/captcha/active-mint-profile', { schema: { hide: true } }, async (req, reply) => {
+        if (!authorize(req, reply))
+            return;
+        reply.send({ ok: true, profileId: captchaManager.getActiveMintProfileId() });
+    });
     app.post('/api/internal/captcha/provider', { schema: { hide: true } }, async (req, reply) => {
         if (!authorize(req, reply))
             return;

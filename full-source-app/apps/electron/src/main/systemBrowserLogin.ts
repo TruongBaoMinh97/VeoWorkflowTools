@@ -27,8 +27,9 @@ interface PageLike {
   url(): string;
   goto(url: string, options: Record<string, unknown>): Promise<unknown>;
   cookies(...urls: string[]): Promise<BrowserCookie[]>;
-  evaluate<T>(pageFunction: () => T | Promise<T>): Promise<T>;
+  evaluate<T>(pageFunction: (...args: any[]) => T | Promise<T>, ...args: any[]): Promise<T>;
   createCDPSession(): Promise<CdpSessionLike>;
+  frames(): Array<{ url(): string; evaluate<T>(pageFunction: (...args: any[]) => T | Promise<T>, ...args: any[]): Promise<T> }>;
 }
 
 interface BrowserLike {
@@ -787,6 +788,33 @@ export async function openProfileInRealChrome(
     }
   });
   return { success: true };
+}
+
+/** Return the actual signed-in Flow tab for the account making a generation request. */
+export async function getAuthenticatedFlowPage(profileId: string): Promise<PageLike> {
+  let active = activeProfileChromes.get(profileId);
+  if (!active?.browser?.connected) {
+    const opened = await openProfileInRealChrome(profileId, FLOW_URL);
+    if (!opened.success)
+      throw new Error(`Không mở được Chrome của profile: ${opened.error ?? 'unknown error'}`);
+    active = activeProfileChromes.get(profileId);
+  }
+  if (!active?.browser?.connected)
+    throw new Error('Chrome của profile chưa kết nối. Mở profile trong Chrome rồi thử lại.');
+
+  const pages = await active.browser.pages();
+  let page = pages.find((candidate) => !candidate.isClosed() && candidate.url().startsWith(FLOW_URL));
+  if (!page) {
+    page = await active.browser.newPage();
+    await page.goto(FLOW_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  }
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await flowShowsSignedIn(page).catch(() => false))
+      return page;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error('Flow chưa đăng nhập trên Chrome của profile này. Hoàn tất đăng nhập hoặc xác minh trong cửa sổ Chrome rồi thử lại.');
 }
 
 export async function closeProfileRealChrome(

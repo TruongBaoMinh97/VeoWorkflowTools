@@ -29,6 +29,7 @@ function parsePositiveInt(value, fallback) {
 class CaptchaManager {
     constructor() {
         this.mintLock = new Mutex();
+        this.activeMintProfileId = null;
         this.pending = new Map();
         this.queue = [];
         this.waiters = [];
@@ -46,8 +47,19 @@ class CaptchaManager {
         this.lastMintDurationMs = null;
         this.mintTimeoutMs = parsePositiveInt(process.env.CAPTCHA_TIMEOUT_MS, 60000);
     }
-    async requestToken(action) {
-        return this.mintLock.acquire(() => getCaptchaProvider() === 'cdp' ? this.mintViaCdp(action) : this.mintOnce(action));
+    async requestToken(action, profileId = null) {
+        return this.mintLock.acquire(async () => {
+            this.activeMintProfileId = profileId;
+            try {
+                return getCaptchaProvider() === 'cdp' ? await this.mintViaCdp(action) : await this.mintOnce(action);
+            }
+            finally {
+                this.activeMintProfileId = null;
+            }
+        });
+    }
+    getActiveMintProfileId() {
+        return this.activeMintProfileId;
     }
     async drainCommands(maxWaitMs) {
         const reset = this.consumePendingReset();

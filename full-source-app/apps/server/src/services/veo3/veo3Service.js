@@ -470,7 +470,7 @@ export class Veo3Service {
         try {
             // todo update logic gen capcha
             for (let i = 0; i < count; i++) {
-                const result = await captchaManager.requestToken(action);
+                const result = await captchaManager.requestToken(action, this.config.profileId);
                 if (!result.token || result.token.trim().length === 0) {
                     throw new Error(`Batch token ${i + 1}/${count} returned empty`);
                 }

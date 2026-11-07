@@ -47,6 +47,7 @@ const {
   getRandomFreePort,
   waitForDebugPort,
   logChromeSpawn,
+  getAuthenticatedFlowPage,
 } = require('./systemBrowserLogin') as {
   killOrphanChromeForProfile(profileDir: string): Promise<void>;
   getRandomFreePort(): Promise<number>;
@@ -60,6 +61,7 @@ const {
     },
   ): Promise<void>;
   logChromeSpawn(reason: string): void;
+  getAuthenticatedFlowPage(profileId: string): Promise<PageLike>;
 };
 const { mainLog } = require('./mainLogger') as {
   mainLog: { info(...args: unknown[]): void };
@@ -394,9 +396,26 @@ async function mintFromFlowFrames(page: PageLike, action: string): Promise<strin
   throw new Error(`GRECAPTCHA_UNAVAILABLE: Không tìm thấy frame hoặc hàm execute hợp lệ sau khi timeout (page=${diagnostic.origin}${diagnostic.path}, sdk=${diagnostic.sdk}, execute=${diagnostic.execute}, frames=${frameCount})`);
 }
 
+async function activeMintProfileId(): Promise<string> {
+  const secret = fs.readFileSync(path.join(app.getPath('userData'), 'captcha-bridge.secret'), 'utf8').trim();
+  const port = Number(process.env.PORT) || 4000;
+  const response = await fetch(`http://127.0.0.1:${port}/api/internal/captcha/active-mint-profile`, {
+    headers: { 'x-local-auth': secret },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok)
+    throw new CaptchaBrowserError(`Không lấy được profile đang tạo ảnh (HTTP ${response.status})`, 'MINT_FAILED');
+  const data = await response.json() as { profileId?: unknown };
+  if (typeof data.profileId !== 'string' || !/^[a-zA-Z0-9_-]{8,80}$/.test(data.profileId))
+    throw new CaptchaBrowserError('Không xác định được profile đang tạo ảnh; hãy thử lại từ job.', 'MINT_FAILED');
+  return data.profileId;
+}
+
 export async function mintCaptchaToken(action: string): Promise<string> {
-  await ensureCaptchaBrowser();
-  const page = await ensureFlowPage();
+  // The legacy IPC bridge passes only `action`; the backend holds the selected
+  // profile for this serialized mint. Never mint on the anonymous /about page.
+  const profileId = await activeMintProfileId();
+  const page = await getAuthenticatedFlowPage(profileId);
   const startedAt = Date.now();
   try {
     const token = await Promise.race([
