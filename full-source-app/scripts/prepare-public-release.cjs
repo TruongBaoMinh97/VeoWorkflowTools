@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const asar = require(path.join(root, 'desktop-app/node_modules/@electron/asar'));
@@ -10,6 +11,21 @@ const output = path.join(root, 'dist-releases', version);
 const app = path.join(output, 'app');
 const stage = path.join(output, 'asar-stage');
 const original = path.join(root, 'full-release/Veo Workflow Tools-win32-x64');
+const sourceNodeModules = path.join(source, 'node_modules');
+const expectedTlsVersion = require(path.join(source, 'apps/server/package.json')).dependencies['node-tls-client'];
+const installedTlsVersion = require(path.join(sourceNodeModules, 'node-tls-client/package.json')).version;
+function syncTlsRuntime(nodeModules) {
+    if (!nodeModules.startsWith(output + path.sep)) throw new Error('Invalid release node_modules destination');
+    for (const name of ['node-tls-client', 'koffi']) {
+        const from = path.join(sourceNodeModules, name);
+        if (!fs.existsSync(path.join(from, 'package.json'))) throw new Error(`Missing source runtime dependency: ${name}`);
+        const to = path.join(nodeModules, name);
+        fs.rmSync(to, { recursive: true, force: true });
+        fs.cpSync(from, to, { recursive: true });
+    }
+    const stagedVersion = require(path.join(nodeModules, 'node-tls-client/package.json')).version;
+    if (stagedVersion !== expectedTlsVersion) throw new Error(`Wrong staged node-tls-client: ${stagedVersion}`);
+}
 function excluded(file) {
     const rel = path.relative(original, file).split(path.sep);
     if (rel.includes('node_modules')) return false;
@@ -18,6 +34,13 @@ function excluded(file) {
         || /^\.env(?:\.|$)/.test(path.basename(file));
 }
 (async () => {
+    if (installedTlsVersion !== expectedTlsVersion) throw new Error(`Source node-tls-client ${installedTlsVersion} does not match ${expectedTlsVersion}`);
+    const tlsRuntime = require(path.join(sourceNodeModules, 'node-tls-client'));
+    if (!tlsRuntime.ClientIdentifier.chrome_152_psk) throw new Error('Source node-tls-client lacks chrome_152_psk');
+    await tlsRuntime.initTLS();
+    const nativeName = `tls-client-${expectedTlsVersion}-windows-amd64.dll`;
+    const nativeFrom = path.join(os.tmpdir(), nativeName);
+    if (!fs.existsSync(nativeFrom) || fs.statSync(nativeFrom).size < 1_000_000) throw new Error(`Validated native TLS library missing: ${nativeFrom}`);
     const resume = process.argv.includes('--resume');
     if (!resume && (fs.existsSync(app) || fs.existsSync(stage))) throw new Error('Release staging already exists; inspect before reusing');
     fs.mkdirSync(output, { recursive: true });
@@ -25,6 +48,10 @@ function excluded(file) {
     if (!fs.existsSync(path.join(serverBuild, 'index.js')) || !fs.existsSync(path.join(rendererBuild, 'index.html'))) {
         throw new Error('Build the server and renderer from source before staging a release');
     }
+    syncTlsRuntime(path.join(app, 'resources/server/node_modules'));
+    const nativeTo = path.join(app, 'resources/server/binaries/tls-client', nativeName);
+    fs.mkdirSync(path.dirname(nativeTo), { recursive: true });
+    fs.copyFileSync(nativeFrom, nativeTo);
     const stagedServerBuild = path.join(app, 'resources/server/dist');
     if (!stagedServerBuild.startsWith(output + path.sep)) throw new Error('Invalid release server destination');
     fs.rmSync(stagedServerBuild, { recursive: true, force: true });
@@ -44,11 +71,14 @@ function excluded(file) {
         }
     }
     clean(stage);
+    syncTlsRuntime(path.join(stage, 'apps/server/node_modules'));
     fs.copyFileSync(path.join(source, 'package.json'), path.join(stage, 'package.json'));
     fs.cpSync(path.join(source, 'apps/electron/dist'), path.join(stage, 'apps/electron/dist'), { recursive: true });
     fs.cpSync(rendererBuild, path.join(stage, 'apps/renderer/dist'), { recursive: true, force: true });
     await asar.createPackage(stage, archive);
     asar.uncache(archive);
+    const archivedTls = JSON.parse(asar.extractFile(archive, path.join('apps', 'server', 'node_modules', 'node-tls-client', 'package.json')).toString()).version;
+    if (archivedTls !== expectedTlsVersion) throw new Error(`Wrong archived node-tls-client: ${archivedTls}`);
     const feed = asar.extractFile(archive, path.join('apps', 'electron', 'dist', 'main', 'privateUpdateAuth.js')).toString();
     if (!feed.includes('TruongBaoMinh97')) throw new Error('Wrong update feed');
     const unsafe = asar.listPackage(archive).filter(p => !p.includes('node_modules') && /\.(db|sqlite|log|db-wal|db-shm)$/.test(p) && !p.endsWith('template.db'));
