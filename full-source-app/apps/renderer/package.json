@@ -1,6 +1,6 @@
 {
   "name": "@veo-workflow/renderer",
-  "version": "1.7.17",
+  "version": "1.7.18",
   "private": true,
   "type": "module",
   "description": "Renderer UI source for Veo Workflow Tools",
