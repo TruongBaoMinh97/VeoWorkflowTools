@@ -5,6 +5,7 @@ import {
   tryMintCaptchaFromFrames,
   type CaptchaFrameLike,
 } from './captchaFrameMint';
+import { ensureFlowEnterpriseScript } from './captchaEnterpriseLoader';
 
 interface CdpSessionLike {
   send(method: string, params: Record<string, unknown>): Promise<unknown>;
@@ -353,6 +354,7 @@ function safeFrameLabel(frameUrl: string): string {
 
 async function mintFromFlowFrames(page: PageLike, action: string): Promise<string> {
   const deadline = Date.now() + (MINT_TIMEOUT_MS - 5_000);
+  let loaderStatus = 'not-needed';
   while (Date.now() < deadline) {
     try {
       const result = await tryMintCaptchaFromFrames(page.frames(), SITE_KEY, action);
@@ -360,13 +362,36 @@ async function mintFromFlowFrames(page: PageLike, action: string): Promise<strin
         log(`mint thành công từ frame ${safeFrameLabel(result.frameUrl)}`);
         return result.token;
       }
+      if (loaderStatus === 'not-needed') {
+        loaderStatus = await ensureFlowEnterpriseScript(page, SITE_KEY);
+        if (loaderStatus === 'wrong-origin') {
+          throw new CaptchaBrowserError(
+            `Trang CAPTCHA đã rời Flow (${safeFrameLabel(page.url())}); cần mở lại Flow và đăng nhập`,
+            'NO_FLOW_PAGE',
+          );
+        }
+        if (loaderStatus === 'script-error') {
+          throw new CaptchaBrowserError('Không tải được reCAPTCHA Enterprise trên trang Flow', 'MINT_FAILED');
+        }
+        log(`reCAPTCHA Enterprise ${loaderStatus} trên ${safeFrameLabel(page.url())}`);
+      }
     }
-    catch {
+    catch (error) {
+      if (error instanceof CaptchaBrowserError)
+        throw error;
       // Bỏ qua lỗi context/frame tạm thời để tiếp tục thử lại ở chu kỳ kế tiếp
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw new Error('GRECAPTCHA_UNAVAILABLE: Không tìm thấy frame hoặc hàm execute hợp lệ sau khi timeout');
+  const diagnostic = await page.evaluate(() => ({
+    origin: location.origin,
+    path: location.pathname,
+    sdk: document.querySelector<HTMLScriptElement>('script[data-veo-recaptcha-loader]')?.dataset.veoRecaptchaLoader ?? 'missing',
+    execute: typeof (window as any).grecaptcha?.enterprise?.execute === 'function',
+  })).catch(() => ({ origin: 'unknown', path: '', sdk: 'unknown', execute: false }));
+  let frameCount = 0;
+  try { frameCount = page.frames().length; } catch { /* Page may have closed. */ }
+  throw new Error(`GRECAPTCHA_UNAVAILABLE: Không tìm thấy frame hoặc hàm execute hợp lệ sau khi timeout (page=${diagnostic.origin}${diagnostic.path}, sdk=${diagnostic.sdk}, execute=${diagnostic.execute}, frames=${frameCount})`);
 }
 
 export async function mintCaptchaToken(action: string): Promise<string> {
