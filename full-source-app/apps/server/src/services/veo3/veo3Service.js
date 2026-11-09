@@ -22,6 +22,7 @@ import { buildVideoBatchArgs, buildVideoSubmitArgs, buildUpscaleArgs, parseMedia
 import { buildGenerateImageArgs, classifyFlowGenError, classifyImageGenError, parseGenerateImageResponse, resolveAspectCode, UnsupportedFlowImageOptionError, } from "./flowImageGen.js";
 import { buildMaseQArgs, detectImageKind, extractUploadedMediaId, flowClientContext, toUploadError, } from "./flowUpload.js";
 import { sessionIdManager } from "../../lib/sessionIdManager.js";
+import { profileImageScheduler } from "../../lib/profileImageScheduler.js";
 import { buildProxyAgents, evictProxyAgent, applyInterProfileJitter, } from "./veo3ProxyManager.js";
 import { getHostUa, getHostSecChUa, getHostSecChUaPlatform, } from "../../lib/hostChromeUa.js";
 const UPLOAD_IMAGE_TIMEOUT_MS = 120000;
@@ -1448,7 +1449,8 @@ export class Veo3Service {
         });
     }
     /**
-     * Generate images with DIFFERENT prompts in parallel (max 20).
+     * Generate images with DIFFERENT prompts through VeoWorkflow's per-profile
+     * admission gate (max 20 prompts per batch).
      *
      * Runs on Flow's `ogiZ0b` batchexecute RPC — cookie-authenticated, synchronous, and
      * answers with the finished image URL. The old aisandbox-pa `batchGenerateImages`
@@ -1482,23 +1484,9 @@ export class Veo3Service {
         if (!aspect.verified) {
             logger.warn(`[Batch Images] mã tỉ lệ ${aspectRatio} (=${aspect.code}) chưa được kiểm chứng với Flow`);
         }
-        const promptCount = options.prompts.length;
         const pendingIndices = options.prompts.flatMap((_, index) => options.completedImages?.has(index) ? [] : [index]);
         if (pendingIndices.length === 0)
             return options.prompts.map((_, index) => options.completedImages.get(index));
-        const tokens = await this.requestRecaptchaTokens("IMAGE_GENERATION", pendingIndices.length);
-        if (tokens.length < pendingIndices.length) {
-            throw new Error(`Batch tokens insufficient: got ${tokens.length}, need ${pendingIndices.length}`);
-        }
-        const tokenByIndex = new Map(pendingIndices.map((index, position) => [index, tokens[position]]));
-        if (options.onRecaptchaComplete) {
-            try {
-                await options.onRecaptchaComplete();
-            }
-            catch (_) {
-                /* non-blocking */
-            }
-        }
         const timeoutMs = options.timeoutMs ?? (Number(process.env.IMAGE_GEN_TIMEOUT_MS) || 240000);
         const sourcePath = `/project/${options.projectId}`;
         const generateOne = async (promptConfig, index) => {
@@ -1506,12 +1494,11 @@ export class Veo3Service {
             const startedAt = Date.now();
             // Args are rebuilt per attempt: callFlowRpc re-runs them if it re-bootstraps the
             // session, and a reCAPTCHA token must never be sent twice.
-            let firstAttempt = true;
             const buildArgs = async () => {
-                const recaptchaToken = firstAttempt
-                    ? tokenByIndex.get(index)
-                    : (await this.requestRecaptchaTokens("IMAGE_GENERATION", 1))[0];
-                firstAttempt = false;
+                const recaptchaToken = (await this.requestRecaptchaTokens("IMAGE_GENERATION", 1))[0];
+                if (index === pendingIndices[0]) {
+                    try { await options.onRecaptchaComplete?.(); } catch { /* Progress is best effort. */ }
+                }
                 return buildGenerateImageArgs({
                     projectId: options.projectId,
                     prompt: promptConfig.prompt,
@@ -1523,8 +1510,6 @@ export class Veo3Service {
                 });
             };
             // Fired at SUBMIT-START so the inter-batch delay counts from submit.
-            if (index === pendingIndices[0])
-                options.onSubmitFired?.();
             let payload;
             try {
                 payload = await callFlowRpc(profileId, FLOW_RPC.generateImage, buildArgs, {
@@ -1545,15 +1530,17 @@ export class Veo3Service {
             });
             return result;
         };
-        logger.info(`🚀 [Batch Images] Gen ${promptCount} ảnh qua Flow ogiZ0b...`);
+        logger.info(`🚀 [Batch Images] Gen ${pendingIndices.length} ảnh qua Flow ogiZ0b...`);
         const settled = await Promise.allSettled(options.prompts.map(async (prompt, index) => {
             if (options.completedImages?.has(index))
                 return options.completedImages.get(index);
-            if (options.isCancelled?.())
-                throw new Error('Batch image cancelled');
-            const result = await generateOne(prompt, index);
-            options.completedImages?.set(index, result);
-            return result;
+            return profileImageScheduler.run(profileId, async () => {
+                if (index === pendingIndices[0])
+                    options.onSubmitFired?.();
+                const result = await generateOne(prompt, index);
+                options.completedImages?.set(index, result);
+                return result;
+            }, options.isCancelled);
         }));
         const results = [];
         let firstError = null;

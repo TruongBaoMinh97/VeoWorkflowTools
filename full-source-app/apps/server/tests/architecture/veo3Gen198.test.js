@@ -2,12 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 const rpc = vi.hoisted(() => vi.fn());
 const mint = vi.hoisted(() => vi.fn());
+const scheduleImage = vi.hoisted(() => vi.fn(async (_profileId, execute) => execute()));
 vi.mock('../../src/lib/flowBoq.js', async (importOriginal) => ({
     ...(await importOriginal()),
     callFlowRpc: rpc,
 }));
 vi.mock('../../src/lib/captchaManager.js', () => ({
     captchaManager: { requestToken: mint },
+}));
+vi.mock('../../src/lib/profileImageScheduler.js', () => ({
+    profileImageScheduler: { run: scheduleImage },
 }));
 
 import { Veo3Service } from '../../src/services/veo3/veo3Service.js';
@@ -77,7 +81,13 @@ describe('Veo3Studio 1.9.8 generation core in VeoWorkflow', () => {
         const media = Array(12).fill(null);
         media[0] = 'media-2';
         media[11] = [null, 'https://images.example/result.jpg'];
-        rpc.mockRejectedValueOnce(new Error('temporary failure')).mockResolvedValueOnce([[media]]);
+        rpc.mockImplementationOnce(async (_profileId, _rpcId, buildArgs) => {
+            await buildArgs();
+            throw new Error('temporary failure');
+        }).mockImplementationOnce(async (_profileId, _rpcId, buildArgs) => {
+            await buildArgs();
+            return [[media]];
+        });
         const service = new Veo3Service({ profileId: 'minh' });
         const requestTokens = vi.spyOn(service, 'requestRecaptchaTokens')
             .mockImplementation(async (_action, count) => Array.from({ length: count }, (_, i) => `token-${i}`));
@@ -94,13 +104,18 @@ describe('Veo3Studio 1.9.8 generation core in VeoWorkflow', () => {
         expect(completedImages.has(0)).toBe(false);
 
         media[0] = 'media-1';
-        rpc.mockResolvedValueOnce([[media]]);
+        rpc.mockImplementationOnce(async (_profileId, _rpcId, buildArgs) => {
+            await buildArgs();
+            return [[media]];
+        });
         const results = await service.generateBatchImages(options);
 
         expect(results.map((result) => result.name)).toEqual(['media-1', 'media-2']);
         expect(rpc).toHaveBeenCalledTimes(3);
-        expect(requestTokens.mock.calls.map((call) => call[1])).toEqual([2, 1]);
+        expect(requestTokens.mock.calls.map((call) => call[1])).toEqual([1, 1, 1]);
+        expect(scheduleImage.mock.calls.map((call) => call[0])).toEqual(['minh', 'minh', 'minh']);
         rpc.mockReset();
+        scheduleImage.mockClear();
     });
 
     it('keeps the provider reason when a polled video row fails', () => {
