@@ -481,9 +481,9 @@ export const genNormalService = {
      * were bound to; the detail page can't poll credits and the UI shows a
      * persistent error. Returns the IDs that were cleaned up.
      */
-    async deleteOrphanProjects() {
+    async deleteOrphanProjects(source = 'normal') {
         logger.info('[GenNormal] Cleanup orphan projects requested');
-        const projects = await genNormalRepository.listProjects('normal');
+        const projects = await genNormalRepository.listProjects(source);
         const orphanIds = projects
             .filter((p) => !p.profiles || p.profiles.length === 0)
             .map((p) => p.id);
@@ -507,9 +507,9 @@ export const genNormalService = {
             orphanIds,
         };
     },
-    async deleteAllProjects() {
+    async deleteAllProjects(source = 'normal') {
         logger.info('[GenNormal] Deleting all projects');
-        const projects = await genNormalRepository.listProjects('normal');
+        const projects = await genNormalRepository.listProjects(source);
         // Run project deletions in parallel with a concurrency cap so we don't
         // overwhelm the proxy pool (each project may hit multiple profile proxies).
         const CONCURRENCY = 5;

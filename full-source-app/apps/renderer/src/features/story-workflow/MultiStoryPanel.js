@@ -1,7 +1,7 @@
 /* MULTI_STORY_UI_START */
 function MultiStoryHome({onStory,onOpenDetail}){
  const [revision,setRevision]=u.useState(0);
- return e.jsxs('div',{className:'h-full flex flex-col',children:[e.jsxs('div',{className:'m-3 flex gap-2 flex-wrap',children:[e.jsx('button',{className:'rounded text-white px-4 py-2',style:{backgroundColor:'#7c3aed'},onClick:onStory,children:'Tạo prompt từ TXT / Audio / SRT'}),e.jsx(MultiStoryPanel,{onOpenDetail,onChanged:()=>setRevision(x=>x+1)})]}),e.jsx(w3,{onOpenDetail},revision)]});
+ return e.jsxs('div',{className:'h-full flex flex-col',children:[e.jsxs('div',{className:'m-3 flex gap-2 flex-wrap',children:[e.jsx('button',{className:'rounded text-white px-4 py-2',style:{backgroundColor:'#7c3aed'},onClick:onStory,children:'Tạo prompt từ TXT / Audio / SRT'}),e.jsx(MultiStoryPanel,{onOpenDetail,onChanged:()=>setRevision(x=>x+1)})]}),e.jsx(StudioGenHome,{onOpenDetail},revision)]});
 }
 function MultiStoryPanel({onOpenDetail,onChanged}){
  const [open,setOpen]=u.useState(false),[templates,setTemplates]=u.useState([]),[profiles,setProfiles]=u.useState([]),[workflowId,setWorkflowId]=u.useState(''),[profileIds,setProfileIds]=u.useState([]),[fields,setFields]=u.useState({outputDir:'',referencePath:'',style:'',characterDescription:''}),[root,setRoot]=u.useState(''),[items,setItems]=u.useState([]),[selected,setSelected]=u.useState([]),[busy,setBusy]=u.useState(false),[error,setError]=u.useState(''),[history,setHistory]=u.useState([]),[queue,setQueue]=u.useState(null),[settings,setSettings]=u.useState({imageModelKey:'GEM_PIX_2',concurrency:8,batchSize:4,delaySeconds:7});

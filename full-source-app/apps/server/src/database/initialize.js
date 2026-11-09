@@ -5,6 +5,7 @@
 import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import { logger } from '../lib/logger.js';
 import { checkSchemaVersion, reconcileSchemaAdditive, databaseHasUserData, dbFileLooksOccupied, markSchemaReconciled } from '../lib/databaseSchemaChecker.js';
@@ -382,8 +383,27 @@ export async function initializeDatabase() {
         else {
             initializeDevDatabase(absoluteDbPath, dbDir, dbUrl, dbExists);
         }
+        ensureStudioUpscaleSerial(absoluteDbPath);
     }
     catch (error) {
         logger.error('Database initialization error', { error: error.message });
+    }
+}
+
+// Older installations and the current template database predate this optional
+// setting. The additive SQLite change keeps every existing project's behavior.
+export function ensureStudioUpscaleSerial(dbPath) {
+    const db = new Database(dbPath, { fileMustExist: true });
+    try {
+        const columns = db.pragma('table_info("GenNormalProject")');
+        if (!columns.length)
+            throw new Error('GenNormalProject table is missing');
+        if (!columns.some((column) => column.name === 'upscaleSerial')) {
+            db.exec('ALTER TABLE "GenNormalProject" ADD COLUMN "upscaleSerial" BOOLEAN NOT NULL DEFAULT 0');
+            logger.info('Added GenNormalProject.upscaleSerial with existing projects set to false');
+        }
+    }
+    finally {
+        db.close();
     }
 }

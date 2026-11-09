@@ -28,6 +28,10 @@ export function buildRenderer() {
     path.join(srcDir, 'pages/GenNormalDetailPage.js'),
     'utf8'
   );
+  const studioGenHomeJs = fs.readFileSync(
+    path.join(srcDir, 'pages/StudioGenHome.js'),
+    'utf8'
+  );
   const multiStoryJs = fs.readFileSync(
     path.join(srcDir, 'features/story-workflow/MultiStoryPanel.js'),
     'utf8'
@@ -52,6 +56,9 @@ export function buildRenderer() {
   if (!shellJs.includes('/* __GEN_NORMAL_DETAIL_PAGE_MODULE__ */')) {
     throw new Error('Missing __GEN_NORMAL_DETAIL_PAGE_MODULE__ placeholder in app-shell.js');
   }
+  if (!shellJs.includes('/* __STUDIO_GEN_HOME_MODULE__ */')) {
+    throw new Error('Missing __STUDIO_GEN_HOME_MODULE__ placeholder in app-shell.js');
+  }
   if (!shellJs.includes('/* __STORY_FEATURES_MODULES__ */')) {
     throw new Error('Missing __STORY_FEATURES_MODULES__ placeholder in app-shell.js');
   }
@@ -66,6 +73,7 @@ export function buildRenderer() {
 
   const compiledJs = shellJs
     .replace('/* __GEN_NORMAL_DETAIL_PAGE_MODULE__ */', () => genNormalDetailPageJs.trim())
+    .replace('/* __STUDIO_GEN_HOME_MODULE__ */', () => studioGenHomeJs.trim())
     .replace('/* __STORY_FEATURES_MODULES__ */', () => featureBundle);
 
   const shellCss = fs.readFileSync(path.join(srcDir, 'core/app-shell.css'), 'utf8');

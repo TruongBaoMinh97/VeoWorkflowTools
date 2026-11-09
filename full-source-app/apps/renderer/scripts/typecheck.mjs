@@ -11,6 +11,7 @@ const requiredFiles = [
   'core/app-shell.js',
   'core/app-shell.css',
   'pages/GenNormalDetailPage.js',
+  'pages/StudioGenHome.js',
   'features/manga-story/MangaStoryPanel.js',
   'features/story-workflow/MultiStoryPanel.js',
   'features/story-workflow/StoryCapcutSync.js',

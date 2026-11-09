@@ -206,6 +206,9 @@ model GenNormalProject {
   // Higher values speed up batch upscale but raise 403 / memory pressure
   // (a 4K upsample response is ~11MB). Set via "Cài đặt nâng cao".
   imageUpscaleConcurrency Int?
+  // Studio projects run one upscale at a time per profile. Existing normal
+  // projects retain their previous parallel behavior after schema migration.
+  upscaleSerial           Boolean                   @default(false)
   // Omni Flash family allows 4/6/8/10s output. NULL for Veo 3.1 (locked 8s).
   videoDurationSeconds    Int?
   // Công tắc audio (khớp Flow web): true → audioFailurePreference BLOCK_SILENCED_VIDEOS

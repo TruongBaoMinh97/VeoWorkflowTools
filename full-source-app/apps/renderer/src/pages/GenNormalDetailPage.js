@@ -30,6 +30,7 @@ const P4 = ({ projectId: t, onBack: s }) => {
       te && Sa(te);
       const le = Da(l, "imageUpscaleConcurrency");
       le && le >= 1 && le <= 4 && Hl(le),
+        setUpscaleSerial(Boolean(Da(l, "upscaleSerial"))),
         Wr(Da(l, "autoDownload") ?? !1),
         Vl(Da(l, "fileNamingTemplate") || Mr),
         l.outputDir && q(l.outputDir);
@@ -257,6 +258,7 @@ const P4 = ({ projectId: t, onBack: s }) => {
       ),
       jn = u.useRef(null),
       [er, Hl] = u.useState(1),
+      [upscaleSerial, setUpscaleSerial] = u.useState(false),
       Hn = u.useRef(new Set()),
       [js, Fl] = u.useState(!1),
       [Jr, Sa] = u.useState("1080P"),
@@ -6858,12 +6860,42 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                     e.jsxs("div", {
                       children: [
                         e.jsx("label", {
+                          className: "block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5",
+                          children: "Tốc độ upscale",
+                        }),
+                        e.jsxs("label", {
+                          className: "flex items-center gap-2 cursor-pointer select-none",
+                          children: [
+                            e.jsx("input", {
+                              type: "checkbox",
+                              checked: upscaleSerial,
+                              onChange: async (event) => {
+                                const next = event.target.checked;
+                                setUpscaleSerial(next);
+                                try {
+                                  await Me.updateProject(t, { upscaleSerial: next });
+                                } catch (error) {
+                                  setUpscaleSerial(!next);
+                                  console.error("Failed to save upscaleSerial:", error);
+                                }
+                              },
+                            }),
+                            e.jsx("span", { className: "text-sm text-slate-700 font-medium", children: "Upscale lần lượt (tránh quá tải)" }),
+                          ],
+                        }),
+                        e.jsx("p", { className: "text-[11px] text-slate-400 mt-1.5", children: "Mỗi profile chỉ chạy một lượt upscale tại một thời điểm." }),
+                      ],
+                    }),
+                    e.jsxs("div", {
+                      children: [
+                        e.jsx("label", {
                           className:
                             "block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5",
                           children: "Luồng upscale ảnh / profile",
                         }),
                         e.jsx("select", {
                           value: er,
+                          disabled: upscaleSerial,
                           onChange: async (E) => {
                             const D = Number(E.target.value);
                             Hl(D);
@@ -6879,7 +6911,7 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                             }
                           },
                           className:
-                            "w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500",
+                            "w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:cursor-not-allowed",
                           children: [1, 2, 3, 4].map((E) =>
                             e.jsxs(
                               "option",

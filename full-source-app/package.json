@@ -11,7 +11,7 @@
     "types"
   ],
   "dependencies": {
-    "@prisma/client": "^6.19.0",
+    "@prisma/client": "6.19.3",
     "chrome-remote-interface": "^0.33.3",
     "electron-updater": "^6.1.7",
     "fs-extra": "^11.2.0",

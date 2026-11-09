@@ -155,9 +155,9 @@ export async function registerGenNormalRoutes(app) {
         const catalog = await refreshCatalogNow();
         return { success: catalog !== null, fetchedAt: catalog?.fetchedAt ?? null };
     });
-    // List projects (filtered by source: 'normal' by default, or 'pro_editor')
+    // List projects by the surface that created them.
     app.get('/api/gen-normal/projects', async (req) => {
-        const { source } = z.object({ source: z.enum(['normal', 'pro_editor']).optional() }).parse(req.query);
+        const { source } = z.object({ source: z.enum(['normal', 'pro_editor', 'studio']).optional() }).parse(req.query);
         return genNormalService.listProjects(source);
     });
     // Get project detail
@@ -177,7 +177,7 @@ export async function registerGenNormalRoutes(app) {
             inputMethod: z.string().optional(),
             aspectRatio: z.string().optional(),
             outputDir: z.string().optional(),
-            source: z.enum(['normal', 'pro_editor']).optional() // Source: 'normal' (default) or 'pro_editor'
+            source: z.enum(['normal', 'pro_editor', 'studio']).optional()
         }).parse(req.body);
         try {
             const project = await genNormalService.createProject(body);
@@ -214,6 +214,7 @@ export async function registerGenNormalRoutes(app) {
             imageUpscaleRes: z.enum(['2K', '4K']).nullable().optional(),
             videoUpscaleRes: z.enum(['1080P', '4K']).nullable().optional(),
             imageUpscaleConcurrency: z.number().int().min(1).max(4).nullable().optional(),
+            upscaleSerial: z.boolean().optional(),
             videoDurationSeconds: videoDurationSecondsSchema,
             audioEnabled: z.boolean().optional(),
             fileNamingTemplate: z.string().min(1).max(200).nullable().optional()
@@ -228,14 +229,16 @@ export async function registerGenNormalRoutes(app) {
         return project;
     });
     // Delete all projects
-    app.delete('/api/gen-normal/projects', async () => {
-        return genNormalService.deleteAllProjects();
+    app.delete('/api/gen-normal/projects', async (req) => {
+        const { source } = z.object({ source: z.enum(['normal', 'pro_editor', 'studio']).optional() }).parse(req.query);
+        return genNormalService.deleteAllProjects(source);
     });
     // Cleanup orphan projects (no profiles attached — e.g. after the only
     // attached profile was deleted). Must come BEFORE the `:id` route below
     // so Fastify doesn't treat "cleanup-orphans" as an id.
-    app.delete('/api/gen-normal/projects/cleanup-orphans', async () => {
-        const result = await genNormalService.deleteOrphanProjects();
+    app.delete('/api/gen-normal/projects/cleanup-orphans', async (req) => {
+        const { source } = z.object({ source: z.enum(['normal', 'pro_editor', 'studio']).optional() }).parse(req.query);
+        const result = await genNormalService.deleteOrphanProjects(source);
         return result;
     });
     // Delete project

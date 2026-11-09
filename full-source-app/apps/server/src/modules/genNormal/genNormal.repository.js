@@ -81,6 +81,7 @@ export const genNormalRepository = {
                 aspectRatio: data.aspectRatio,
                 outputDir: data.outputDir,
                 source: data.source || 'normal', // Default to 'normal' if not specified
+                upscaleSerial: data.source === 'studio',
                 concurrency: 8,
                 batchSize: 1,
                 delaySeconds: 10,

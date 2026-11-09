@@ -36,6 +36,25 @@ const profile403Until = new Map();
 // khi captcha score chưa kịp hồi giữa các submit. Env override để dễ tune live.
 const MIN_GAP_BETWEEN_SUBMIT_MS = Number(process.env.VIDEO_UPSAMPLE_MIN_GAP_MS) || 8000;
 const lastSubmitByProfile = new Map();
+const jobSerialCache = new Map();
+const JOB_SERIAL_CACHE_TTL_MS = 30000;
+async function isJobSerialUpscale(genNormalJobId) {
+    const cached = jobSerialCache.get(genNormalJobId);
+    if (cached && cached.expiresAt > Date.now())
+        return cached.serial;
+    try {
+        const row = await prisma.genNormalJob.findUnique({
+            where: { id: genNormalJobId },
+            select: { project: { select: { upscaleSerial: true } } },
+        });
+        const serial = row?.project?.upscaleSerial ?? true;
+        jobSerialCache.set(genNormalJobId, { serial, expiresAt: Date.now() + JOB_SERIAL_CACHE_TTL_MS });
+        return serial;
+    }
+    catch {
+        return true;
+    }
+}
 export class VideoUpsamplingHandler extends BaseJobHandler {
     static async acquireProfileLock(profileId) {
         const previous = VideoUpsamplingHandler.submissionLocks.get(profileId);
@@ -89,6 +108,16 @@ export class VideoUpsamplingHandler extends BaseJobHandler {
                 status: 'PROCESSING'
             }
         });
+        let serialJobId;
+        try {
+            const jobData = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
+            serialJobId = jobData?.genNormalJobId;
+        }
+        catch {
+            serialJobId = undefined;
+        }
+        if (serialJobId && (await isJobSerialUpscale(serialJobId)))
+            return processingCount < 1;
         const limit = await getUpscaleLimit(profileId);
         if (processingCount >= limit) {
             return false; // Profile at upscale limit
@@ -156,7 +185,8 @@ export class VideoUpsamplingHandler extends BaseJobHandler {
                 status: 'PROCESSING'
             }
         });
-        const dynamicLimit = await getUpscaleLimit(profileId);
+        const isSerial = await isJobSerialUpscale(genNormalJobId);
+        const dynamicLimit = isSerial ? 1 : await getUpscaleLimit(profileId);
         if (processingUpsamplingCount >= dynamicLimit) {
             logger.debug(`[VideoUpsamplingHandler] ⏳ Profile ${profileId.substring(0, 8)}... has ${processingUpsamplingCount} PROCESSING upsampling jobs (max ${dynamicLimit}). Deferring.`);
             throw new Error(`BATCH_WAIT: Profile has ${processingUpsamplingCount} PROCESSING upsampling jobs (max ${dynamicLimit})`);
@@ -579,7 +609,8 @@ export class VideoUpsamplingHandler extends BaseJobHandler {
                 status: 'PROCESSING'
             }
         });
-        const batchLimit = await getUpscaleLimit(profileId);
+        const serial = await isJobSerialUpscale(currentGenNormalJob.id);
+        const batchLimit = serial ? 1 : await getUpscaleLimit(profileId);
         const availableSlots = batchLimit - processingCount;
         logger.debug(`[VideoUpsamplingHandler] Collect batch for ${profileId.substring(0, 8)}… (processing=${processingCount}/${batchLimit} slots=${availableSlots} current=${currentQueueJob.id})`);
         if (availableSlots <= 0) {

@@ -27,28 +27,36 @@ const POST_BATCH_COOLDOWN_MS_PARALLEL = 2000;
 // 🧊 After a 429, freeze profile upscale for 5 min
 const POST_429_COOLDOWN_MS = 5 * 60 * 1000;
 const profile429Until = new Map();
-// Short TTL cache of `imageUpscaleConcurrency` per profile so canProcess
-// stays synchronous-cheap (SQLite picker calls it on every job).
+// Cache per job: a profile may run Studio and normal projects with different
+// upscale settings at the same time.
 const profileLimitCache = new Map();
 const LIMIT_CACHE_TTL_MS = 30000;
 export class ImageUpsamplingHandler extends BaseJobHandler {
-    static effectiveLimit(profileId) {
-        const cached = profileLimitCache.get(profileId);
+    static effectiveLimit(profileId, genNormalJobId) {
+        const cached = profileLimitCache.get(`${profileId}:${genNormalJobId}`);
         if (cached && cached.expiresAt > Date.now())
             return cached.limit;
         return DEFAULT_PER_PROFILE_LIMIT;
     }
     static async refreshLimitForJob(profileId, genNormalJobId) {
+        const cacheKey = `${profileId}:${genNormalJobId}`;
+        const cached = profileLimitCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now())
+            return cached.limit;
         try {
             const row = await prisma.genNormalJob.findUnique({
                 where: { id: genNormalJobId },
-                select: { project: { select: { imageUpscaleConcurrency: true } } },
+                select: { project: { select: { imageUpscaleConcurrency: true, upscaleSerial: true } } },
             });
+            if (row?.project?.upscaleSerial) {
+                profileLimitCache.set(cacheKey, { limit: 1, expiresAt: Date.now() + LIMIT_CACHE_TTL_MS });
+                return 1;
+            }
             const raw = row?.project?.imageUpscaleConcurrency;
             const limit = typeof raw === 'number' && raw >= 1 && raw <= MAX_PER_PROFILE_LIMIT
                 ? raw
                 : DEFAULT_PER_PROFILE_LIMIT;
-            profileLimitCache.set(profileId, { limit, expiresAt: Date.now() + LIMIT_CACHE_TTL_MS });
+            profileLimitCache.set(cacheKey, { limit, expiresAt: Date.now() + LIMIT_CACHE_TTL_MS });
             return limit;
         }
         catch {
@@ -72,7 +80,17 @@ export class ImageUpsamplingHandler extends BaseJobHandler {
         if (cooldownUntil > Date.now()) {
             return false;
         }
-        const limit = ImageUpsamplingHandler.effectiveLimit(profileId);
+        let genNormalJobId;
+        try {
+            const data = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
+            genNormalJobId = data?.genNormalJobId;
+        }
+        catch {
+            genNormalJobId = undefined;
+        }
+        const limit = genNormalJobId
+            ? await ImageUpsamplingHandler.refreshLimitForJob(profileId, genNormalJobId)
+            : DEFAULT_PER_PROFILE_LIMIT;
         const inflight = ImageUpsamplingHandler.inflightByProfile.get(profileId) || 0;
         return inflight < limit;
     }
