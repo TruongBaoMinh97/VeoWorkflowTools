@@ -61989,7 +61989,7 @@ Profile: ${se.profileId.substring(0, 8)}...
         ],
       }),
     });
-  if (h) return e.jsxs('div',{className:'h-screen w-screen overflow-hidden bg-slate-50',children:[e.jsx(Rr,{name:t==='veo3-studio'?'Veo3 Gen Studio':'Gen Veo3',children:e.jsx(P4,{projectId:h,onBack:()=>{m(null);s(t==='veo3-studio'?'veo3-studio':'gen-normal');window.history.pushState({},'',t==='veo3-studio'?'/veo3-studio':'/');}},h)}),e.jsx(Nh,{})]});
+  if (h) return e.jsxs('div',{className:'h-screen w-screen overflow-hidden bg-slate-50',children:[e.jsx(Rr,{name:t==='veo3-studio'?'Veo3 Gen Studio':'Gen Veo3',children:e.jsx(P4,{projectId:h,studioMode:t==='veo3-studio',onBack:()=>{m(null);s(t==='veo3-studio'?'veo3-studio':'gen-normal');window.history.pushState({},'',t==='veo3-studio'?'/veo3-studio':'/');}},h)}),e.jsx(Nh,{})]});
   if (b)
     return e.jsxs("div", {
       className:

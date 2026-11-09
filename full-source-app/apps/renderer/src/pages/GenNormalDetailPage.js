@@ -1,4 +1,6 @@
-const P4 = ({ projectId: t, onBack: s }) => {
+const P4 = ({ projectId: t, onBack: s, studioMode = false }) => {
+    const studioDelayOptions = [25, 30, 35, 40, 45, 50, 55, 60];
+    const delayOptions = studioMode ? studioDelayOptions : od;
     const r = u.useRef(!1);
     u.useEffect(
       () => (
@@ -86,14 +88,14 @@ const P4 = ({ projectId: t, onBack: s }) => {
       [I, U] = u.useState(!1),
       [V, q] = u.useState(""),
       [X, O] = u.useState(8),
-      [H, ae] = u.useState(12),
+      [H, ae] = u.useState(studioMode ? 30 : 12),
       ue = (E) => {
-        const D = od.includes(E) ? E : od[0];
+        const D = delayOptions.includes(E) ? E : delayOptions[0];
         ae(D);
       },
       de = 12,
       ce = Math.max(1, Math.min(X, de)),
-      Q = od.includes(H) ? H : od[0],
+      Q = delayOptions.includes(H) ? H : delayOptions[0],
       {
         loading: se,
         uploadingFrames: ie,
@@ -2995,7 +2997,9 @@ Vui lòng kiểm tra lại các job và thêm đủ ảnh cần thiết.`)
                         : `${ks.length} profiles đã hết quota ngày của Veo3 (${Nu}).`,
                   }),
                   " ",
-                  "Gen đã dừng cho các job liên quan. Veo3 tự reset sau ~24h — không cần thao tác gì thêm.",
+                  studioMode
+                    ? "Chỉ đợt gen vừa lỗi bị dừng — các job khác vẫn chạy. Muốn chạy lại job lỗi thì gen lại sau hoặc đổi profile."
+                    : "Gen đã dừng cho các job liên quan. Veo3 tự reset sau ~24h — không cần thao tác gì thêm.",
                 ],
               }),
               e.jsxs("button", {
@@ -3499,7 +3503,7 @@ Vui lòng kiểm tra lại các job và thêm đủ ảnh cần thiết.`)
                                 ),
                             ],
                           }),
-                        e.jsxs("div", {
+                        !studioMode && e.jsxs("div", {
                           className:
                             "mb-2 flex items-center justify-between gap-2 rounded border border-teal-200 bg-teal-50/70 px-2.5 py-1.5 text-xs",
                           children: [
@@ -3519,8 +3523,8 @@ Vui lòng kiểm tra lại các job và thêm đủ ảnh cần thiết.`)
                             }),
                           ],
                         }),
-                        e.jsx(StoryCapcutSync,{key:t,projectId:t,disabled:xt||ar||Qr>0}),
-                        e.jsx(InlineStoryPrompts,{projectId:t,outputDir:V,disabled:xt||ar||Qr>0,onFill:(result,folder)=>{w(result.prompts.join('\n=====\n'));C('separator');T('IMAGE_GENERATION');vs(zn);bs(result.images.map(image=>({...image,preview:Lr(image.preview)})));q(folder);}}),
+                        !studioMode && e.jsx(StoryCapcutSync,{key:t,projectId:t,disabled:xt||ar||Qr>0}),
+                        !studioMode && e.jsx(InlineStoryPrompts,{projectId:t,outputDir:V,disabled:xt||ar||Qr>0,onFill:(result,folder)=>{w(result.prompts.join('\n=====\n'));C('separator');T('IMAGE_GENERATION');vs(zn);bs(result.images.map(image=>({...image,preview:Lr(image.preview)})));q(folder);}}),
                         e.jsx(Ir, {
                           ref: Dc,
                           value: v,
@@ -5593,8 +5597,8 @@ Prompt 3`,
                                   "Chọn để gen lại",
                                 ],
                               })),
-                        e.jsx(MangaStoryPanel,{key:"manga-"+t,projectId:t,onUpdated:p}),
-e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
+                        !studioMode && e.jsx(MangaStoryPanel,{key:"manga-"+t,projectId:t,onUpdated:p}),
+                        !studioMode && e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                         bt.length > 0 &&
                           e.jsxs(e.Fragment, {
                             children: [
@@ -6721,7 +6725,7 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                           onChange: (E) => ue(Number(E.target.value)),
                           className:
                             "w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500",
-                          children: od.map((E) =>
+                          children: delayOptions.map((E) =>
                             e.jsxs(
                               "option",
                               { value: E, children: [E, "s"] },
@@ -6731,8 +6735,9 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                         }),
                         e.jsx("p", {
                           className: "text-[11px] text-slate-400 mt-1.5",
-                          children:
-                            "5-7s: chế độ nhanh, chỉ dùng khi extension bridge ổn (score reCAPTCHA cao). 10-25s: an toàn mặc định.",
+                          children: studioMode
+                            ? "Nghỉ giữa các đợt gửi, 25–60s (mặc định 30s). Càng dài càng ít bị reCAPTCHA 403."
+                            : "5-7s: chế độ nhanh, chỉ dùng khi extension bridge ổn (score reCAPTCHA cao). 10-25s: an toàn mặc định.",
                         }),
                       ],
                     }),
@@ -6799,11 +6804,9 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                               : e.jsxs("p", {
                                   className:
                                     "text-[11px] text-slate-400 mt-1.5",
-                                  children: [
-                                    "Gửi ",
-                                    we,
-                                    " video cùng mode chung 1 batchId (server kẹp tối đa 2 để an toàn). Video async — nặng hơn ảnh, để luồng (concurrency) thấp khi test.",
-                                  ],
+                                  children: studioMode
+                                    ? [we > 1 ? `Gửi ${we} video trong 1 yêu cầu chung với 1 token reCAPTCHA, như web Flow (khác model hoặc tỉ lệ sẽ tách yêu cầu). ` : "Mỗi video 1 yêu cầu riêng. ", "Video async — nặng hơn ảnh, để luồng (concurrency) thấp khi test."]
+                                    : ["Gửi ", we, " video cùng mode chung 1 batchId (server kẹp tối đa 2 để an toàn). Video async — nặng hơn ảnh, để luồng (concurrency) thấp khi test."],
                                 }),
                         ],
                       });
@@ -6869,6 +6872,7 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                             e.jsx("input", {
                               type: "checkbox",
                               checked: upscaleSerial,
+                              className: "h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer",
                               onChange: async (event) => {
                                 const next = event.target.checked;
                                 setUpscaleSerial(next);
@@ -6883,19 +6887,22 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                             e.jsx("span", { className: "text-sm text-slate-700 font-medium", children: "Upscale lần lượt (tránh quá tải)" }),
                           ],
                         }),
-                        e.jsx("p", { className: "text-[11px] text-slate-400 mt-1.5", children: "Mỗi profile chỉ chạy một lượt upscale tại một thời điểm." }),
+                        e.jsx("p", { className: "text-[11px] text-slate-400 mt-1.5", children: studioMode ? "Mỗi account chỉ chạy 1 upscale mỗi lúc (ảnh lẫn video). Gen ảnh/video không bị ảnh hưởng." : "Mỗi profile chỉ chạy một lượt upscale tại một thời điểm." }),
                       ],
                     }),
                     e.jsxs("div", {
+                      className: studioMode && upscaleSerial ? "opacity-50" : "",
                       children: [
                         e.jsx("label", {
                           className:
                             "block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5",
-                          children: "Luồng upscale ảnh / profile",
+                          title: studioMode && upscaleSerial ? "Đang dùng chế độ lần lượt — tắt để cài số luồng" : undefined,
+                          children: studioMode ? "Luồng upscale song song / profile" : "Luồng upscale ảnh / profile",
                         }),
                         e.jsx("select", {
                           value: er,
                           disabled: upscaleSerial,
+                          "aria-disabled": upscaleSerial,
                           onChange: async (E) => {
                             const D = Number(E.target.value);
                             Hl(D);
@@ -6922,8 +6929,9 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
                         }),
                         e.jsx("p", {
                           className: "text-[11px] text-slate-400 mt-1.5",
-                          children:
-                            "1 luồng: an toàn nhất (mặc định). 2-4 luồng: nhanh hơn nhưng tăng risk 403 reCAPTCHA, đặc biệt với 4K (~11MB/response).",
+                          children: studioMode
+                            ? upscaleSerial ? "Đang dùng chế độ lần lượt — tắt ở trên để dùng song song." : "2-4 luồng: nhanh hơn nhưng dễ bị 429/403, nhất là 4K (~11MB/response)."
+                            : "1 luồng: an toàn nhất (mặc định). 2-4 luồng: nhanh hơn nhưng tăng risk 403 reCAPTCHA, đặc biệt với 4K (~11MB/response).",
                         }),
                       ],
                     }),
@@ -6995,8 +7003,8 @@ e.jsx(PolicyPromptRewrite,{key:t,projectId:t,jobs:b,onUpdated:p}),
           title: hc === "start" ? "Sẵn sàng bắt đầu gen?" : "Sẵn sàng tạo job?",
           description:
             hc === "start"
-              ? `Sắp queue ${Mt.length} job để chạy. Captcha extension phải hoạt động và tab Flow AI phải mở.`
-              : "Sắp tạo job từ prompts. Hệ thống sẽ dùng captcha extension để xác thực với Google Veo3.",
+              ? `Sắp queue ${Mt.length} job để chạy. Chrome của profile sẽ mở khi cần xác thực với Google Flow.`
+              : "Sắp tạo job từ prompts. Chrome của profile sẽ lấy mã bảo mật từ Google Flow khi cần.",
           onCancel: mu,
           onConfirm: hu,
         }),

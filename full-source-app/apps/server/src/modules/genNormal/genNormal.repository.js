@@ -84,7 +84,7 @@ export const genNormalRepository = {
                 upscaleSerial: data.source === 'studio',
                 concurrency: 8,
                 batchSize: 1,
-                delaySeconds: 10,
+                delaySeconds: data.source === 'studio' ? 30 : 10,
                 profiles: {
                     create: data.profileIds.map(profileId => ({
                         profileId
