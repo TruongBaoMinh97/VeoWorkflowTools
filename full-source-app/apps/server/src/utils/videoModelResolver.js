@@ -1,9 +1,42 @@
 import { logger } from '../lib/logger.js';
-// Omni Flash (id: "abra") — single tier, adjustable duration
+/**
+ * Video Model Resolver
+ * Logic để chọn đúng video model key dựa trên generation type và aspect ratio
+ * Dựa trên dữ liệu model thực tế từ Veo3 API
+ *
+ * UPDATED 2026-05-16: Flow API đã bỏ family "Fast [Lower Priority]"
+ * (`*_fast_*_ultra_relaxed`). Thay vào đó:
+ * - "Lite [Lower Priority]" (`*_lite_low_priority`) là tier free/relaxed mới.
+ * - REFERENCE_TO_VIDEO giờ chấp nhận `veo_3_1_r2v_lite` cho cả LANDSCAPE và
+ *   PORTRAIT (3 image refs, audio, 8s).
+ *
+ * Active tiers per mode:
+ * - TEXT_TO_VIDEO   : lite | lite_relaxed | fast | quality
+ * - IMAGE_TO_VIDEO  : lite | lite_relaxed | fast | quality
+ * - FRAME_TO_FRAME  : lite | lite_relaxed | fast | quality
+ * - REFERENCE_TO_VIDEO : lite | lite_relaxed | fast  (no Quality from API)
+ */
+import { getCatalogSnapshot, isClosed, loadSunsets, sunsetFor, } from '../lib/modelCatalog.js';
+import { buildLiveImageModels, buildLiveVideoModels } from './liveVideoModels.js';
+// Omni Flash families. 1.1 = id "abra" (4/6/8/10s); 1.2 = id "macaron_cookie" (3-15s, real end-image
+// key `i2v_fl` up to 10s). The picker is built from the live catalogue; these tables serve the
+// key builder and the offline fallback.
 export const OMNI_FLASH_DURATIONS = [4, 6, 8, 10];
-const OMNI_FLASH_CREDIT_BY_DURATION = {
-    4: 7, 6: 10, 8: 12, 10: 15,
+const OMNI_FAMILIES = {
+    abra: {
+        durations: OMNI_FLASH_DURATIONS,
+        maxSecondsByPrefix: {},
+        frameToFramePrefix: null,
+        creditByDuration: { 4: 7, 6: 10, 8: 12, 10: 15 },
+    },
+    macaron_cookie: {
+        durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        maxSecondsByPrefix: { i2v_fl: 10 },
+        frameToFramePrefix: 'i2v_fl',
+        creditByDuration: { 3: 9, 4: 12, 5: 15, 6: 18, 7: 21, 8: 24, 9: 27, 10: 30, 11: 36, 12: 42, 13: 48, 14: 54, 15: 60 },
+    },
 };
+const OMNI_FLASH_CREDIT_BY_DURATION = { ...OMNI_FAMILIES.abra.creditByDuration };
 const OMNI_FLASH_SUPPORTED_MODES = [
     'TEXT_TO_VIDEO',
     'REFERENCE_TO_VIDEO',
@@ -11,31 +44,65 @@ const OMNI_FLASH_SUPPORTED_MODES = [
     'IMAGE_TO_VIDEO',
     'FRAME_TO_FRAME',
 ];
-// Mode → key prefix. Omni Flash có key start-image (`abra_i2v_*`) nhưng KHÔNG có
-// end-image key, nên FRAME_TO_FRAME cũng map về `i2v` — frontend ẩn End Frame để
-// job luôn submit dạng start-image only.
-const OMNI_FLASH_MODE_PREFIX = {
-    TEXT_TO_VIDEO: 't2v',
-    REFERENCE_TO_VIDEO: 'r2v',
-    REFERENCE_TO_VIDEO_AUDIO: 'r2v',
-    IMAGE_TO_VIDEO: 'i2v',
-    FRAME_TO_FRAME: 'i2v',
-};
-export function isOmniFlashKey(key) {
-    return !!key && (key === 'abra' || key.startsWith('abra_'));
-}
-function normalizeOmniFlashDuration(duration) {
-    if (duration && OMNI_FLASH_DURATIONS.includes(duration)) {
-        return duration;
+function omniPrefixFor(family, generationType) {
+    switch (generationType) {
+        case 'TEXT_TO_VIDEO': return 't2v';
+        case 'REFERENCE_TO_VIDEO':
+        case 'REFERENCE_TO_VIDEO_AUDIO': return 'r2v';
+        case 'IMAGE_TO_VIDEO': return 'i2v';
+        case 'FRAME_TO_FRAME': return OMNI_FAMILIES[family].frameToFramePrefix ?? 'i2v';
+        default: return null;
     }
-    return 8;
+}
+export function omniFamilyOfKey(key) {
+    if (!key)
+        return null;
+    if (key === 'macaron_cookie' || key.startsWith('macaron_cookie_'))
+        return 'macaron_cookie';
+    if (key === 'abra' || key.startsWith('abra_'))
+        return 'abra';
+    return null;
+}
+export function isOmniFlashKey(key) {
+    return omniFamilyOfKey(key) !== null;
+}
+/** Supported duration for a family and key prefix: out of range is clamped, a gap inside the range falls back to 8s. */
+function normalizeOmniDuration(family, prefix, duration) {
+    const spec = OMNI_FAMILIES[family];
+    const max = spec.maxSecondsByPrefix[prefix] ?? Math.max(...spec.durations);
+    const allowed = spec.durations.filter((d) => d <= max);
+    if (!duration)
+        return 8;
+    if (allowed.includes(duration))
+        return duration;
+    if (duration > allowed[allowed.length - 1])
+        return allowed[allowed.length - 1];
+    if (duration < allowed[0])
+        return allowed[0];
+    return allowed.includes(8) ? 8 : allowed[0];
+}
+/** A picker key like `abra_360p` / `macaron_cookie_360p` asks for the low-resolution (cheaper) variant. */
+export function isOmniLowResKey(key) {
+    return !!key && /_360p$/.test(key) && isOmniFlashKey(key);
+}
+/**
+ * `lowRes` is honoured for text-to-video and reference-to-video without voices: those are the 360p row shapes
+ * captured from the web client, so other modes always get the full-resolution key.
+ */
+export function buildOmniModelKey(family, generationType, duration, lowRes = false) {
+    const prefix = omniPrefixFor(family, generationType);
+    if (!prefix)
+        return null;
+    const lowResMode = generationType === 'TEXT_TO_VIDEO' || generationType === 'REFERENCE_TO_VIDEO';
+    const suffix = lowRes && lowResMode ? '_360p' : '';
+    return `${family}_${prefix}_${normalizeOmniDuration(family, prefix, duration)}s${suffix}`;
 }
 /**
  * Image generation model keys
  */
 export const IMAGE_GENERATION_MODELS = {
     GEM_PIX_2: 'GEM_PIX_2', // 🍌 Nano Banana Pro
-    BELUGA: 'BELUGA', // 🍌 Nano Banana 2.1
+    BELUGA: 'BELUGA', // 🍌 Nano Banana 2 (Google renamed NARWHAL → BELUGA, 2026-10)
     HARBOR_SEAL: 'HARBOR_SEAL', // 🍌 Nano Banana 2 Lite
 };
 /**
@@ -43,11 +110,16 @@ export const IMAGE_GENERATION_MODELS = {
  * Removed or unknown keys (e.g. legacy 'R2I', 'IMAGEN_3_5') coerce to 'GEM_PIX_2'
  * so old projects/flows never submit an invalid model to the Flow API.
  */
+// Legacy key aliases — Google renamed models server-side. Old projects/flows that
+// saved the previous key get remapped to the current working one instead of
+// coercing to the GEM_PIX_2 default.
+const LEGACY_IMAGE_MODEL_ALIASES = {
+    NARWHAL: 'BELUGA', // Nano Banana 2: NARWHAL → 404 since 2026-10; now BELUGA
+};
 export function normalizeImageModelKey(key) {
-    // Flow replaced Nano Banana 2 (NARWHAL) with Nano Banana 2.1 (BELUGA).
-    // Migrate saved workflows instead of silently falling back to Pro.
-    if (key === 'NARWHAL')
-        return 'BELUGA';
+    if (key != null && Object.prototype.hasOwnProperty.call(LEGACY_IMAGE_MODEL_ALIASES, key)) {
+        return LEGACY_IMAGE_MODEL_ALIASES[key];
+    }
     // Own-property check (not `in`) so prototype-chain keys like 'constructor'/'__proto__'
     // don't slip through and get sent verbatim to the Flow API.
     return key != null && Object.prototype.hasOwnProperty.call(IMAGE_GENERATION_MODELS, key)
@@ -161,11 +233,31 @@ export function toProModelKey(key) {
  * @param userTier Optional user paygate tier. Affects Lite credit cost (5 for ADVANCED, 10 otherwise).
  */
 export function getAvailableVideoModels(generationType, aspectRatio, userTier) {
-    const aspectRatioEnum = convertAspectRatioToEnum(aspectRatio);
-    const models = [];
     if (generationType === 'IMAGE_GENERATION') {
         return []; // Image generation uses different models
     }
+    const sunsets = loadSunsets();
+    const catalog = getCatalogSnapshot();
+    if (catalog) {
+        const live = buildLiveVideoModels({ catalog, generationType, aspectRatio, userTier, sunsets });
+        if (live.length > 0)
+            return live;
+    }
+    return filterClosed(getStaticVideoModels(generationType, aspectRatio, userTier), sunsets);
+}
+function filterClosed(models, sunsets) {
+    return models.filter((m) => !isClosed(sunsetFor(staticGroupName(m), sunsets)));
+}
+/** Group name of a static entry, used to apply sunsets when the live catalogue is unavailable. */
+function staticGroupName(model) {
+    if (model.family === 'omni_flash')
+        return model.key === 'macaron_cookie' ? 'Omni 1.2 Flash' : 'Omni 1.1 Flash';
+    return model.displayName;
+}
+/** Offline fallback built from the hard-coded tables (used until the first catalogue fetch succeeds). */
+function getStaticVideoModels(generationType, aspectRatio, userTier) {
+    const aspectRatioEnum = convertAspectRatioToEnum(aspectRatio);
+    const models = [];
     const modelMap = {
         'TEXT_TO_VIDEO': TEXT_TO_VIDEO_MODELS,
         'IMAGE_TO_VIDEO': IMAGE_TO_VIDEO_MODELS,
@@ -201,45 +293,26 @@ export function getAvailableVideoModels(generationType, aspectRatio, userTier) {
             capabilities: ['VIDEO_MODEL_CAPABILITY_AUDIO'],
         });
     }
-    // Veo 3.1 Fast — Ultra (ADVANCED) bills 10 credits, Pro (INTERMEDIATE/ENTRY)
-    // bills 20 (confirmed from the real account catalog creditMapping).
-    if (aspectModels.fast) {
+    // Fast / Quality are not listed offline: Google retires both on 2026-12-05 and they were hidden on request.
+    // Omni Flash — duration-driven. Only surfaced for the modes it actually supports.
+    for (const family of ['macaron_cookie', 'abra']) {
+        if (!OMNI_FLASH_SUPPORTED_MODES.includes(generationType))
+            continue;
+        const spec = OMNI_FAMILIES[family];
+        const durations = generationType === 'FRAME_TO_FRAME'
+            ? spec.durations.filter((d) => d <= (spec.maxSecondsByPrefix.i2v_fl ?? Infinity))
+            : [...spec.durations];
         models.push({
-            key: aspectModels.fast,
-            displayName: 'Veo 3.1 - Fast',
-            creditCost: userTier === 'ADVANCED' ? 10 : 20,
-            videoLengthSeconds: 8,
-            videoGenerationTimeSeconds: generationType === 'TEXT_TO_VIDEO' ? 100 : 120,
-            isRelaxed: false,
-            capabilities: ['VIDEO_MODEL_CAPABILITY_AUDIO'],
-        });
-    }
-    // Veo 3.1 Quality
-    if (aspectModels.quality && aspectModels.quality !== aspectModels.fast) {
-        models.push({
-            key: aspectModels.quality,
-            displayName: 'Veo 3.1 - Quality',
-            creditCost: 100,
-            videoLengthSeconds: 8,
-            videoGenerationTimeSeconds: 210,
-            isRelaxed: false,
-            capabilities: ['VIDEO_MODEL_CAPABILITY_AUDIO'],
-        });
-    }
-    // Omni Flash — single tier with adjustable duration (4/6/8/10s).
-    // Only surfaced for the modes Omni Flash actually supports.
-    if (OMNI_FLASH_SUPPORTED_MODES.includes(generationType)) {
-        models.push({
-            key: 'abra',
-            displayName: '⚡ Omni Flash',
-            creditCost: OMNI_FLASH_CREDIT_BY_DURATION[8],
+            key: family,
+            displayName: family === 'macaron_cookie' ? '⚡ Omni 1.2 Flash' : '⚡ Omni 1.1 Flash',
+            creditCost: spec.creditByDuration[8],
             videoLengthSeconds: 8,
             videoGenerationTimeSeconds: 240,
             isRelaxed: false,
             capabilities: ['VIDEO_MODEL_CAPABILITY_AUDIO', 'VIDEO_MODEL_CAPABILITY_DURATION_ADJUSTABLE'],
             family: 'omni_flash',
-            availableDurations: [...OMNI_FLASH_DURATIONS],
-            creditByDuration: { ...OMNI_FLASH_CREDIT_BY_DURATION },
+            availableDurations: durations,
+            creditByDuration: Object.fromEntries(durations.map((d) => [d, spec.creditByDuration[d]])),
             supportedModes: [...OMNI_FLASH_SUPPORTED_MODES],
             maxImageInputs: 7,
             maxAudioReferences: 5,
@@ -251,13 +324,19 @@ export function getAvailableVideoModels(generationType, aspectRatio, userTier) {
 /**
  * Get available image generation models
  */
-export function getAvailableImageModels() {
-    // Đúng 3 model gen ảnh Nano Banana theo catalog thật của Flow API.
-    // Key được truyền verbatim tới Google làm `imageModelName` (không có bảng map).
+export function getAvailableImageModels(userTier) {
+    const catalog = getCatalogSnapshot();
+    if (catalog) {
+        const live = buildLiveImageModels(catalog, userTier);
+        if (live.length > 0)
+            return live;
+    }
+    // Offline fallback: the Nano Banana models of the catalogue as of 2026-11-09. Keys go to Google
+    // verbatim as `imageModelName`.
     return [
         { key: 'GEM_PIX_2', displayName: '🍌 Nano Banana Pro' },
-        { key: 'BELUGA', displayName: '🍌 Nano Banana 2.1' },
         { key: 'HARBOR_SEAL', displayName: '🍌 Nano Banana 2 Lite' },
+        { key: 'BELUGA', displayName: '🍌 Nano Banana 2.1' },
     ];
 }
 /**
@@ -309,12 +388,9 @@ export function convertAspectRatioToImageEnum(aspectRatio) {
  * @param quality - fast, quality, lite, or lite_relaxed
  * @returns The correct model key from the model maps
  */
-export function getModelKeyForGenerationType(generationType, aspectRatio, quality = 'fast', duration, family = 'veo_3_1') {
+export function getModelKeyForGenerationType(generationType, aspectRatio, quality = 'fast', duration, family = 'veo_3_1', omniKey) {
     if (family === 'omni_flash') {
-        const prefix = OMNI_FLASH_MODE_PREFIX[generationType];
-        if (!prefix)
-            return null;
-        return `abra_${prefix}_${normalizeOmniFlashDuration(duration)}s`;
+        return buildOmniModelKey(omniFamilyOfKey(omniKey) ?? 'abra', generationType, duration, isOmniLowResKey(omniKey));
     }
     // Convert aspect ratio to enum format if needed
     let aspectRatioEnum;
@@ -345,19 +421,18 @@ export function getModelKeyForGenerationType(generationType, aspectRatio, qualit
  * @param quality - fast or quality (default: fast)
  * @returns Object with modelKey and validation result
  */
-export function resolveVideoModelKey(generationType, aspectRatio, quality = 'fast', duration, family = 'veo_3_1') {
+export function resolveVideoModelKey(generationType, aspectRatio, quality = 'fast', duration, family = 'veo_3_1', omniKey) {
     if (family === 'omni_flash') {
-        const prefix = OMNI_FLASH_MODE_PREFIX[generationType];
-        const d = normalizeOmniFlashDuration(duration);
-        if (!prefix) {
+        const omniFamily = omniFamilyOfKey(omniKey) ?? 'abra';
+        const modelKey = buildOmniModelKey(omniFamily, generationType, duration, isOmniLowResKey(omniKey));
+        if (!modelKey) {
             return {
-                modelKey: `abra_t2v_${d}s`,
+                modelKey: buildOmniModelKey(omniFamily, 'TEXT_TO_VIDEO', duration) ?? `${omniFamily}_t2v_8s`,
                 isValid: false,
-                error: `Omni Flash không hỗ trợ mode ${generationType} (chỉ T2V, R2V, I2V).`,
+                error: `Omni Flash không hỗ trợ mode ${generationType} (chỉ T2V, R2V, I2V, F2F).`,
             };
         }
-        const modelKey = `abra_${prefix}_${d}s`;
-        logger.info(`[VideoModelResolver] Omni Flash → ${modelKey} (mode=${generationType}, duration=${d}s)`);
+        logger.info(`[VideoModelResolver] Omni Flash → ${modelKey} (mode=${generationType}, duration=${duration ?? 8}s)`);
         return { modelKey, isValid: true };
     }
     // Convert aspect ratio to enum format if needed
@@ -475,4 +550,35 @@ export function getSupportedAspectRatios(generationType) {
         return ['1:1', '3:4', '4:3', '9:16', '16:9'];
     }
     return ['9:16', '16:9'];
+}
+/** Catalogue group a model key belongs to: from the live snapshot, else the families we know by name. */
+function groupNameOfKey(key) {
+    const catalog = getCatalogSnapshot();
+    if (catalog) {
+        for (const group of catalog.videoGroups) {
+            if (group.models.some((m) => m.key === key) || group.groupId === key)
+                return group.displayName;
+        }
+    }
+    const family = omniFamilyOfKey(key);
+    if (family)
+        return family === 'abra' ? 'Omni 1.1 Flash' : 'Omni 1.2 Flash';
+    if (/^veo_3_1_.*_fast\b|^veo_3_1_.*_fast_/.test(key))
+        return 'Veo 3.1 - Fast';
+    return null;
+}
+/**
+ * Throws once a model's retirement day has arrived, so a stale project or an old API client cannot keep
+ * submitting to a model Google has closed. No-op for unknown keys and for models without a sunset.
+ */
+export function assertModelOpen(modelKey, now = Date.now()) {
+    if (!modelKey)
+        return;
+    const group = groupNameOfKey(modelKey);
+    if (!group)
+        return;
+    const sunset = sunsetFor(group, loadSunsets());
+    if (!sunset || now < Date.parse(`${sunset.closesOn}T00:00:00Z`))
+        return;
+    throw new Error(`Model "${group}" đã đóng từ ${sunset.closesOn}. Hãy chọn model khác.`);
 }

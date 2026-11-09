@@ -20,6 +20,7 @@ import { registerUpdateRoutes } from "./modules/update/update.routes.js";
 import { registerGeminiApiRoutes } from "./modules/geminiApi/geminiApi.routes.js";
 import { registerProxyRoutes } from "./modules/proxy/proxy.routes.js";
 import { globalProxyManager } from "./lib/GlobalProxyManager.js";
+import { invalidateAllFlowSessions } from "./lib/flowBoq.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { requestLogger } from "./middleware/requestLogger.js";
 import { authenticateUser } from "./middleware/authMiddleware.js";
@@ -32,6 +33,7 @@ import { registerWorkflowBatchRoutes } from "./modules/workflow/workflow.batch.r
 import { registerDoodleVideoRoutes } from "./modules/doodleVideo/doodleVideo.routes.js";
 import { registerScriptWriterRoutes } from "./modules/scriptWriter/scriptWriter.routes.js";
 import { traceBoot } from "./lib/bootStatus.js";
+globalProxyManager.on('rotated', invalidateAllFlowSessions);
 const PUBLIC_PATHS = [
     "/health",
     "/api/health",
@@ -159,8 +161,10 @@ export function buildServer() {
     void globalProxyManager
         .init()
         .catch((e) => logger.warn("[ProxyManager] init failed", e));
+    startModelCatalogService();
     app.setErrorHandler(errorHandler);
     return app;
 }
 import { logger } from "./lib/logger.js";
+import { startModelCatalogService } from "./services/modelCatalogService.js";
 export { logger };

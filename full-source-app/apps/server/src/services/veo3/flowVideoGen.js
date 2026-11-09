@@ -27,6 +27,7 @@ const VERIFIED_KEYS = new Set([
     // t2v — 4s/6s carry the length, 8s is the plain legacy key
     'veo_3_1_t2v_lite_4s', 'veo_3_1_t2v_lite_6s', 'veo_3_1_t2v_fast_4s', 'veo_3_1_t2v_quality_4s',
     'veo_3_1_t2v_lite', 'veo_3_1_t2v_fast', 'veo_3_1_t2v_fast_ultra', 'veo_3_1_t2v',
+    'veo_3_1_t2v_lite_low_priority', // relaxed tier — 15/15 submits accepted (2026-10-25)
     // i2v
     'veo_3_1_i2v_s_quality_4s', 'veo_3_1_i2v_s_lite_4s', 'veo_3_1_i2v_s_fast_4s',
     'veo_3_1_i2v_lite', 'veo_3_1_i2v_s_fast_ultra', 'veo_3_1_i2v_s',
@@ -60,8 +61,8 @@ const stripOrientation = (key) => key.replace(/_(portrait|landscape)(?=_|$)/g, '
  */
 export function flowVideoModelKeyCandidates(input) {
     const { legacyKey, mode } = input;
-    if (/^abra/.test(legacyKey))
-        return [{ key: legacyKey, verified: true }];
+    if (OMNI_KEY.test(legacyKey))
+        return [{ key: legacyKey, verified: /^abra/.test(legacyKey) }];
     const seconds = input.seconds ?? DEFAULT_FLOW_VIDEO_SECONDS;
     const tier = tierOf(legacyKey);
     const stripped = stripOrientation(legacyKey);
@@ -91,6 +92,10 @@ const acceptedKeys = new Map();
 export const modelKeySlot = (mode, legacyKey, seconds = DEFAULT_FLOW_VIDEO_SECONDS) => `${mode}|${legacyKey}|${seconds}`;
 export const rememberAcceptedKey = (slot, key) => void acceptedKeys.set(slot, key);
 export const acceptedKeyFor = (slot) => acceptedKeys.get(slot);
+/** Omni Flash model keys: 1.1 (`abra_*`) and 1.2 (`macaron_cookie_*`). */
+const OMNI_KEY = /^(abra|macaron_cookie)/;
+const OMNI_LOW_RES_KEY = /^(abra|macaron_cookie)_(?:t2v|r2v)_\d+s_360p$/;
+const OMNI_LOW_RES_CODE = 4;
 /** `1` = portrait 9:16, `2` = landscape 16:9 (both measured). */
 export function videoAspectCode(aspect) {
     if (/PORTRAIT/.test(aspect))
@@ -123,9 +128,8 @@ export function frameCrop(mediaId, aspectCode) {
     const visible = imageRatio / target;
     return [Number(((1 - visible) / 2).toFixed(16)), null, Number(((1 + visible) / 2).toFixed(16)), 1];
 }
-/** Build the argument tree for one generation row. */
-export function buildVideoSubmitArgs(input) {
-    const ctx = [null, FLOW_PRODUCT_SLOT, null, null, null, input.projectId, null, null, null, null, [input.recaptchaToken, 1]];
+/** One generation row, as Flow expects it inside `args[0]`. Every row carries its own pair of client UUIDs. */
+function buildVideoRow(input) {
     const text = [null, null, [[[input.prompt]]]];
     const ids = [null, null, null, null, newClientUuid(), newClientUuid()];
     const frame = (mediaId) => [null, mediaId, null, null, null, frameCrop(mediaId, input.aspectCode)];
@@ -133,7 +137,11 @@ export function buildVideoSubmitArgs(input) {
     switch (input.mode) {
         case 't2v':
             row = [text, input.modelKey, input.aspectCode, null, ids];
-            if (/^abra/.test(input.modelKey))
+            // Omni: the trailing block is `[seconds]`; on a 360p key the web sends the resolution code `[4]` there
+            // instead (captured 2026-11-09: macaron_cookie_t2v_15s_360p).
+            if (OMNI_LOW_RES_KEY.test(input.modelKey))
+                row.push(null, null, [OMNI_LOW_RES_CODE]);
+            else if (OMNI_KEY.test(input.modelKey))
                 row.push(null, null, [input.omniSeconds ?? DEFAULT_FLOW_VIDEO_SECONDS]);
             break;
         case 'i2v':
@@ -150,9 +158,33 @@ export function buildVideoSubmitArgs(input) {
             row = [text, (input.referenceMediaIds ?? []).map((id) => [null, id]), input.modelKey, input.aspectCode, null, ids];
             if (input.referenceAudioIds?.length)
                 row.push(null, input.referenceAudioIds.map((voice) => [voice]));
+            // Omni 360p (`*_r2v_<n>s_360p`): the web row ends with the resolution code `[4]` after five nulls
+            // (captured 2026-11-09, abra_r2v_10s_360p).
+            else if (OMNI_LOW_RES_KEY.test(input.modelKey))
+                row.push(null, null, null, null, null, [OMNI_LOW_RES_CODE]);
             break;
     }
-    return [[row], ctx, [newClientUuid(), 1]];
+    return row;
+}
+const videoCtx = (projectId, recaptchaToken) => [
+    null, FLOW_PRODUCT_SLOT, null, null, null, projectId, null, null, null, null, [recaptchaToken, 1],
+];
+/** Build the argument tree for one generation row. */
+export function buildVideoSubmitArgs(input) {
+    return [[buildVideoRow(input)], videoCtx(input.projectId, input.recaptchaToken), [newClientUuid(), 1]];
+}
+/**
+ * Trailing number of `[batchUuid, n]` in a multi-row call. The web client sent `2` with 4 rows while a
+ * single-row call here has always sent `1` (15/15 accepted). What it means is not known yet — keep it
+ * in one place until a live capture settles it.
+ */
+export const VIDEO_BATCH_TRAILER = 2;
+/** Args for ONE call that submits several rows with ONE token: `[[row…], ctx, [batchUuid, n]]`. */
+export function buildVideoBatchArgs(input) {
+    if (input.rows.length === 0)
+        throw new Error('Batch video cần ít nhất 1 hàng');
+    const rows = input.rows.map((row) => buildVideoRow({ ...row, mode: input.mode, modelKey: input.modelKey, aspectCode: input.aspectCode }));
+    return [rows, videoCtx(input.projectId, input.recaptchaToken), [newClientUuid(), VIDEO_BATCH_TRAILER]];
 }
 /** Args for the upscale rpc (`p0UkFb`): `row[2]` is the aspect, `row[6]` is the resolution (1080p → 2, 4K → 3). */
 export function buildUpscaleArgs(input) {
@@ -197,6 +229,17 @@ const asUrl = (v) => (typeof v === 'string' && /^https?:\/\//.test(v) ? v : unde
  * Read one media row, as returned by `jwpduf` (`payload[2][0]`) and `getMedia` (`payload`):
  * `[id, projectId, workflowId, null, null, [[ts], prompt, …, status at [8], 1, <thumb url at [10]>], null, [[…, video url at [8], …], …, [null, [video, thumb]]]]`.
  */
+/**
+ * Message for a failed media row. The status code alone ("trạng thái 4") says nothing, so keep what the
+ * row does carry: any PUBLIC_ERROR_* reason (it also lets the queue tell a policy refusal from a transient
+ * failure) and whatever follows the code in the status cell. No reason is invented when there is none.
+ */
+function failedRowMessage(row, statusCode, statusCell) {
+    const reasons = [...new Set(JSON.stringify(row).match(/PUBLIC_ERROR_[A-Z0-9_]+/g) ?? [])];
+    const extra = Array.isArray(statusCell) && statusCell.length > 1 ? JSON.stringify(statusCell.slice(1)).slice(0, 200) : '';
+    const details = [...reasons, ...(extra && !reasons.length ? [extra] : [])];
+    return `Flow báo trạng thái ${statusCode} cho video${details.length ? ` (${details.join(', ')})` : ''}`;
+}
 export function parseMediaRow(row) {
     if (!Array.isArray(row) || typeof row[0] !== 'string')
         return null;
@@ -216,7 +259,7 @@ export function parseMediaRow(row) {
         status,
         videoUrl: asUrl(generated[8]) ?? asUrl(pair[0]),
         thumbnailUrl: asUrl(meta[10]) ?? asUrl(pair[1]),
-        error: status === 'MEDIA_GENERATION_STATUS_FAILED' ? `Flow báo trạng thái ${statusCode} cho video` : undefined,
+        error: status === 'MEDIA_GENERATION_STATUS_FAILED' ? failedRowMessage(row, statusCode, meta[8]) : undefined,
     };
 }
 /** Rows of a `jwpduf` poll response. */

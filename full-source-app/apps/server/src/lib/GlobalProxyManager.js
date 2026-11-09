@@ -12,6 +12,7 @@ import { EventEmitter } from 'events';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { prisma } from './prisma.js';
 import { logger } from './logger.js';
+import { proxyGate } from './proxyGate.js';
 const MIN_ROTATE_INTERVAL_MS = 60000; // 60s between upstream API calls
 const EXPIRY_BUFFER_MS = 90000; // refresh when < 90s remains
 const DEFAULT_FORBIDDEN_THRESHOLD = 3; // default 3x 403 triggers rotate
@@ -196,16 +197,19 @@ class GlobalProxyManagerImpl extends EventEmitter {
             await new Promise((r) => setTimeout(r, wait));
         }
         this.inflight = this.fetchFromProvider()
-            .then((proxy) => {
-            this.current = proxy;
-            this.currentAgent = new SocksProxyAgent(proxy.socks5Url);
-            this.lastError = null;
-            this.forbiddenHits = 0;
-            this.backoffMs = 0;
-            this.emit('rotated', proxy);
+            .then(async (proxy) => {
+            const { drained } = await proxyGate.exclusive(() => {
+                this.current = proxy;
+                this.currentAgent = new SocksProxyAgent(proxy.socks5Url);
+                this.lastError = null;
+                this.forbiddenHits = 0;
+                this.backoffMs = 0;
+                this.emit('rotated', proxy);
+            }, 30000);
             logger.info('[ProxyManager] rotated', {
                 socks5: proxy.socks5,
                 expiresAt: proxy.expiresAt,
+                drained,
             });
             return proxy;
         })

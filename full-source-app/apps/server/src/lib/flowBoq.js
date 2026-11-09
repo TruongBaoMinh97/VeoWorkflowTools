@@ -251,6 +251,9 @@ async function getSession(profileId, userAgent) {
  * very cookies it was just refused for. Scoped to `used` so a slow caller cannot
  * discard a session another call bootstrapped in the meantime.
  */
+export function invalidateAllFlowSessions() {
+    sessionByProfile.clear();
+}
 export function invalidateFlowSession(profileId, used) {
     const cached = sessionByProfile.get(profileId);
     if (!used || cached === used)

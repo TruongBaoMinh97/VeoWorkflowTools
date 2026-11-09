@@ -3,15 +3,17 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as XLSX from 'xlsx';
 import { genNormalService } from './genNormal.service.js';
-import { getAvailableVideoModels, getAvailableImageModels, OMNI_FLASH_DURATIONS } from '../../utils/videoModelResolver.js';
+import { getAvailableVideoModels, getAvailableImageModels } from '../../utils/videoModelResolver.js';
+import { getCatalogSnapshot, isClosed, loadSunsets, sunsetFor } from '../../lib/modelCatalog.js';
+import { buildLiveUpscaleModels } from '../../utils/liveVideoModels.js';
+import { refreshCatalogNow } from '../../services/modelCatalogService.js';
 import { logger } from '../../lib/logger.js';
-// Shared schema: only valid Omni Flash durations (4/6/8/10). NULL/undefined = Veo 3.1 default.
+// Omni 1.2 supports 3–15s; each model family normalizes its own allowed durations.
 const videoDurationSecondsSchema = z
     .number()
     .int()
-    .refine((d) => OMNI_FLASH_DURATIONS.includes(d), {
-    message: 'videoDurationSeconds must be one of 4, 6, 8, 10',
-})
+    .min(3)
+    .max(15)
     .optional();
 export async function registerGenNormalRoutes(app) {
     // Parse an imported Excel for REFERENCE_BATCH: col A = prompt, cols B/C/D = up to
@@ -119,10 +121,39 @@ export async function registerGenNormalRoutes(app) {
             maxConcurrentPerProfile: queueManager.MAX_CONCURRENT_PER_PROFILE,
         };
     });
-    // Get available image generation models
-    app.get('/api/gen-normal/image-models', async () => {
-        const models = getAvailableImageModels();
+    // Get available image generation models (live catalogue, static fallback)
+    app.get('/api/gen-normal/image-models', async (req) => {
+        const { userTier } = z.object({ userTier: z.enum(['ADVANCED', 'INTERMEDIATE', 'ENTRY']).optional() }).parse(req.query);
+        const models = getAvailableImageModels(userTier);
         return { models };
+    });
+    app.get('/api/gen-normal/model-catalog', async (req) => {
+        const { userTier } = z.object({ userTier: z.enum(['ADVANCED', 'INTERMEDIATE', 'ENTRY']).optional() }).parse(req.query);
+        const catalog = getCatalogSnapshot();
+        if (!catalog)
+            return { loaded: false };
+        const sunsets = loadSunsets();
+        const describe = (group) => {
+            const sunset = sunsetFor(group.displayName, sunsets);
+            return {
+                name: group.displayName,
+                id: group.groupId,
+                keys: group.models.length,
+                closesOn: sunset?.closesOn ?? null,
+                hidden: isClosed(sunset),
+            };
+        };
+        return {
+            loaded: true,
+            fetchedAt: catalog.fetchedAt,
+            videoGroups: catalog.videoGroups.map(describe),
+            imageGroups: catalog.imageGroups.map(describe),
+            upscale: buildLiveUpscaleModels(catalog, userTier),
+        };
+    });
+    app.post('/api/gen-normal/model-catalog/refresh', async () => {
+        const catalog = await refreshCatalogNow();
+        return { success: catalog !== null, fetchedAt: catalog?.fetchedAt ?? null };
     });
     // List projects (filtered by source: 'normal' by default, or 'pro_editor')
     app.get('/api/gen-normal/projects', async (req) => {

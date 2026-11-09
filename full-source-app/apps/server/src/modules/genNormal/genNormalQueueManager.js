@@ -2495,10 +2495,10 @@ export class GenNormalQueueManager {
             // Step 2: Get correct model key from model maps
             // This ensures IMAGE_TO_VIDEO and FRAME_TO_FRAME get correct _fl suffix (Veo 3.1),
             // and abra_{t2v,r2v}_${duration}s (Omni Flash).
-            let videoModelKey = getModelKeyForGenerationType(generationType, aspectRatioEnum, quality, duration, family);
+            let videoModelKey = getModelKeyForGenerationType(generationType, aspectRatioEnum, quality, duration, family, projectModelKey);
             // Step 3: Fallback to project model key if lookup fails
             if (!videoModelKey) {
-                videoModelKey = projectModelKey || resolveVideoModelKey(generationType, aspectRatio, quality, duration, family).modelKey;
+                videoModelKey = projectModelKey || resolveVideoModelKey(generationType, aspectRatio, quality, duration, family, projectModelKey).modelKey;
             }
             if (runtimeVerboseLogsEnabled()) {
                 logger.info(`[GenNormal] Resolved video model key`, {

@@ -2,10 +2,11 @@
  * Single dispatch point for every outbound request to labs.google /
  * aisandbox-pa.googleapis.com from Veo3Service.
  *
- * All requests go through `tlsFetch` (chrome_131_PSK JA3 + HTTP/2) so the
- * JA3/JA4 fingerprint matches real Chrome — required because Google
- * reCAPTCHA Enterprise scoring penalises Node `undici`'s default
- * fingerprint.
+ * All requests go through `tlsFetch` (chrome_152_PSK JA3 profile + HTTP/2) so the
+ * JA3/JA4 fingerprint matches real Chrome — required because Google reCAPTCHA
+ * Enterprise scoring penalises Node `undici`'s default fingerprint. NB: the TLS
+ * JA3 profile is PINNED (chrome_152_PSK) while the User-Agent is derived
+ * dynamically from the host Chrome version (VEO3_CHROME_FULL/MAJOR via getHostUa()).
  */
 import { tlsFetch, recycleTlsSession } from '../../lib/tlsClient.js';
 import { getCookieHeader, invalidateCookieJar } from '../../lib/cookieJar.js';
@@ -33,6 +34,9 @@ function envChromeMajor() {
     const n = Number.parseInt(process.env.VEO3_CHROME_MAJOR ?? '', 10);
     return Number.isFinite(n) && n > 0 ? n : null;
 }
+// Single source of truth for the sec-ch-ua brand string lives in hostChromeUa.ts.
+// The submit path still derives from its OWN forcedMajor (not the cached host major),
+// so we alias the pure helper rather than calling getHostSecChUa().
 const deriveSecChUa = buildSecChUaForMajor;
 function deriveSecChUaPlatform(userAgent) {
     if (/Windows/i.test(userAgent))
@@ -106,7 +110,7 @@ export async function googleFetch(opts) {
         finalHeaders[k] = v;
     }
     // Re-assert the forced-Chrome fingerprint AFTER the merge: getSandboxHeaders
-    // passes the profile UA (e.g. Chrome/131) which would otherwise clobber the
+    // passes the profile UA (e.g. Chrome/152) which would otherwise clobber the
     // rewritten baseHeaders UA, leaving UA and sec-ch-ua disagreeing on the major.
     // Both must declare the REAL mint-Chrome major to avoid 403 UNUSUAL_ACTIVITY.
     if (forcedMajor) {

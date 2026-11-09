@@ -210,8 +210,8 @@ function deriveModelTier(modelKey) {
 function resolveVideoModelForMode(videoMode, rawRatio, storedModel, durationSec) {
     const genType = GEN_TYPE_BY_VIDEO_MODE[videoMode] ?? 'TEXT_TO_VIDEO';
     const { family, quality } = deriveModelTier(storedModel);
-    return (getModelKeyForGenerationType(genType, rawRatio, quality, durationSec, family) ??
-        getModelKeyForGenerationType(genType, rawRatio, 'lite', durationSec, family) ??
+    return (getModelKeyForGenerationType(genType, rawRatio, quality, durationSec, family, storedModel) ??
+        getModelKeyForGenerationType(genType, rawRatio, 'lite', durationSec, family, storedModel) ??
         storedModel);
 }
 function emptyNodeState() {

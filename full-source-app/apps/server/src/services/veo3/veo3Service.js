@@ -14,13 +14,14 @@ import { buildProxyUrl } from "../../utils/proxyUtils.js";
 import { extractVerifiedBase64Image } from "../../utils/imagePayload.js";
 import { extractUUIDFromMediaId, normalizeReferenceImage, } from "../../utils/referenceImage.js";
 import { globalProxyManager } from "../../lib/GlobalProxyManager.js";
+import { proxyGate } from "../../lib/proxyGate.js";
 import { googleFetch } from "./veo3HttpClient.js";
 import { callFlowRpc, FlowRpcError, FLOW_RPC, parseCreditsPayload } from "../../lib/flowBoq.js";
-import { buildVideoSubmitArgs, buildUpscaleArgs, parseMediaRow, parsePollResponse, parseVideoSubmitResponse, readUploadedImageSize, rememberImageSize, flowVideoModelKeyCandidates, modelKeySlot, acceptedKeyFor, rememberAcceptedKey, upscaledMediaId, upscaleResolutionOf, videoAspectCode, VIDEO_SUBMIT_RPC, } from "./flowVideoGen.js";
+import { assignOperationsToRows, groupRowsForRpc, isSingleRpcEnabled, shouldIsolateRows } from "./flowVideoBatch.js";
+import { buildVideoBatchArgs, buildVideoSubmitArgs, buildUpscaleArgs, parseMediaRow, parsePollResponse, parseVideoSubmitResponse, readUploadedImageSize, rememberImageSize, flowVideoModelKeyCandidates, modelKeySlot, acceptedKeyFor, rememberAcceptedKey, upscaledMediaId, upscaleResolutionOf, videoAspectCode, VIDEO_SUBMIT_RPC, } from "./flowVideoGen.js";
 import { buildGenerateImageArgs, classifyFlowGenError, classifyImageGenError, parseGenerateImageResponse, resolveAspectCode, UnsupportedFlowImageOptionError, } from "./flowImageGen.js";
 import { buildMaseQArgs, detectImageKind, extractUploadedMediaId, flowClientContext, toUploadError, } from "./flowUpload.js";
 import { sessionIdManager } from "../../lib/sessionIdManager.js";
-import { profileImageScheduler } from "../../lib/profileImageScheduler.js";
 import { buildProxyAgents, evictProxyAgent, applyInterProfileJitter, } from "./veo3ProxyManager.js";
 import { getHostUa, getHostSecChUa, getHostSecChUaPlatform, } from "../../lib/hostChromeUa.js";
 const UPLOAD_IMAGE_TIMEOUT_MS = 120000;
@@ -312,6 +313,16 @@ function readMediaFailureMessage(mediaStatus) {
 /**
  * Veo3 API Service Class
  */
+const EGRESS_UNIT_METHODS = [
+    "batchAsyncGenerateVideoText",
+    "batchAsyncGenerateVideoReferenceImages",
+    "batchAsyncGenerateVideoStartImage",
+    "batchAsyncGenerateVideoStartAndEndImage",
+    "batchAsyncGenerateVideoUpsampleVideo",
+    "generateBatchImages",
+    "upsampleImage",
+    "uploadUserImage",
+];
 export class Veo3Service {
     constructor(config = {}) {
         this.baseUrl = "https://labs.google/fx/api/trpc";
@@ -328,6 +339,19 @@ export class Veo3Service {
             userAgent: this.defaultHeaders["User-Agent"],
             ...config,
         };
+        this.gateEgressUnits();
+    }
+    /**
+     * Run every method that mints a reCAPTCHA token and then sends it as one unit under `proxyGate`,
+     * so a proxy rotation cannot land between the two. Only methods that do not call each other are
+     * listed (units are not re-entrant); `generateCharacterImages` goes through `generateBatchImages`.
+     */
+    gateEgressUnits() {
+        const target = this;
+        for (const name of EGRESS_UNIT_METHODS) {
+            const original = target[name].bind(this);
+            target[name] = (...args) => proxyGate.hold(() => original(...args));
+        }
     }
     /**
      * Update configuration
@@ -598,7 +622,7 @@ export class Veo3Service {
         }
     }
     /**
-     * Headers for TRPC API requests. Issued via the tlsClient Chrome 131 PSK
+     * Headers for TRPC API requests. Issued via the tlsClient Chrome 152 PSK
      * profile — User-Agent, Cookie, sec-ch-ua*, sec-fetch-* must align with the
      * fingerprint or reCAPTCHA Enterprise scoring will downgrade the call.
      */
@@ -823,6 +847,189 @@ export class Veo3Service {
      * another like the web client's.
      */
     async submitVideoViaFlow(mode, request, onRecaptchaComplete, onSubmitFired) {
+        if (request.requests.length > 1 && isSingleRpcEnabled()) {
+            return this.submitVideoViaFlowGrouped(mode, request, onRecaptchaComplete, onSubmitFired);
+        }
+        return this.submitVideoViaFlowSequential(mode, request, onRecaptchaComplete, onSubmitFired);
+    }
+    /**
+     * Web-client style batch: rows that can share a call (same mode, model and aspect) go out in ONE
+     * `batchexecute` with ONE reCAPTCHA token, instead of one call and one token per video. Opt-in via
+     * `VEO3_VIDEO_SINGLE_RPC=1` until a live capture confirms Flow's multi-row answer.
+     *
+     * A failed call fails its whole group. Groups already accepted stay accepted: the remaining rows are
+     * handed back in `failedItems`, like the sequential path does.
+     */
+    async submitVideoViaFlowGrouped(mode, request, onRecaptchaComplete, onSubmitFired) {
+        const profileId = this.config.profileId;
+        if (!profileId)
+            throw new Error("Thiếu profileId — không thể gen video trên Flow");
+        const projectId = request.clientContext?.projectId;
+        if (!projectId)
+            throw new Error("Thiếu Veo3 projectId — không thể gen video trên Flow");
+        this.updateConfig({ veo3ProjectId: projectId });
+        const items = request.requests;
+        const groups = groupRowsForRpc(items.map((item, index) => ({ index, groupKey: `${item.videoModelKey}|${videoAspectCode(item.aspectRatio)}` })));
+        logger.info(`[Video] ${mode}: ${items.length} video → ${groups.length} yêu cầu (${groups.map((g) => g.length).join("+")} hàng, 1 token mỗi yêu cầu)`);
+        const operations = [];
+        const failedItems = [];
+        for (let g = 0; g < groups.length; g++) {
+            const rowItems = groups[g].map((index) => items[index]);
+            try {
+                const sent = await this.sendVideoRowGroup(mode, profileId, projectId, rowItems, g === 0, onRecaptchaComplete, onSubmitFired);
+                operations.push(...sent.operations);
+                failedItems.push(...sent.failedItems);
+            }
+            catch (err) {
+                // A rejection of the call can come from one row (content, a bad argument). Re-send the rows one by
+                // one so the healthy ones still go through and only the offender is reported. Account-wide and
+                // transport failures are left alone (see shouldIsolateRows).
+                if (rowItems.length > 1 && shouldIsolateRows(err?.message, err?.errorText)) {
+                    logger.warn(`[Video] ${mode}: ${rowItems.length} hàng bị Flow từ chối — gửi lại từng hàng để tìm hàng gây lỗi`);
+                    const isolated = await this.sendRowsOneByOne(mode, profileId, projectId, rowItems);
+                    operations.push(...isolated.operations);
+                    failedItems.push(...isolated.failedItems);
+                    if (isolated.accountWideError !== undefined) {
+                        if (operations.length === 0)
+                            throw isolated.accountWideError;
+                        groups.slice(g + 1).flat().forEach((index) => failedItems.push({ sceneId: items[index].metadata?.sceneId ?? "" }));
+                        break;
+                    }
+                    continue;
+                }
+                // Earlier groups are already accepted (and charged): hand back what went through.
+                if (operations.length === 0)
+                    throw err;
+                const remaining = groups.slice(g).flat();
+                remaining.forEach((index, n) => failedItems.push({ sceneId: items[index].metadata?.sceneId ?? "", ...(n === 0 ? { error: err } : {}) }));
+                logger.warn(`[Video] ${mode} dừng ở yêu cầu ${g + 1}/${groups.length}: giữ ${operations.length} video đã gửi, ${remaining.length} còn lại sẽ gửi lại`);
+                break;
+            }
+        }
+        return { operations, ...(failedItems.length > 0 ? { failedItems } : {}) };
+    }
+    /**
+     * Send rows one call each, in order. A row refused for its own content is reported in `failedItems`
+     * with its error; any other failure stops the loop (`accountWideError`) and the rows not yet tried are
+     * handed back without an error so the queue sends them again.
+     */
+    async sendRowsOneByOne(mode, profileId, projectId, rowItems) {
+        const operations = [];
+        const failedItems = [];
+        for (let i = 0; i < rowItems.length; i++) {
+            const sceneId = rowItems[i].metadata?.sceneId ?? "";
+            try {
+                const sent = await this.sendVideoRowGroup(mode, profileId, projectId, [rowItems[i]], false);
+                operations.push(...sent.operations);
+                failedItems.push(...sent.failedItems);
+            }
+            catch (err) {
+                if (shouldIsolateRows(err?.message, err?.errorText)) {
+                    failedItems.push({ sceneId, error: err });
+                    continue;
+                }
+                rowItems.slice(i).forEach((item, n) => failedItems.push({ sceneId: item.metadata?.sceneId ?? "", ...(n === 0 ? { error: err } : {}) }));
+                return { operations, failedItems, accountWideError: err };
+            }
+        }
+        return { operations, failedItems };
+    }
+    /** One call for a group of rows that share mode, model and aspect. Throws the classified error on failure. */
+    async sendVideoRowGroup(mode, profileId, projectId, rowItems, isFirstGroup, onRecaptchaComplete, onSubmitFired) {
+        const lead = rowItems[0];
+        const aspectCode = videoAspectCode(lead.aspectRatio);
+        const slot = modelKeySlot(mode, lead.videoModelKey);
+        const remembered = acceptedKeyFor(slot);
+        const candidates = remembered
+            ? [{ key: remembered, verified: true }]
+            : flowVideoModelKeyCandidates({ legacyKey: lead.videoModelKey, mode });
+        // Only the very first send of the batch uses a pre-minted token (it lets the queue show the
+        // reCAPTCHA step as done); every other send mints right before the POST, like the web client.
+        let preminted;
+        if (isFirstGroup) {
+            preminted = (await this.requestRecaptchaTokens("VIDEO_GENERATION", 1))[0];
+            if (!preminted)
+                throw new Error("Không xin được token reCAPTCHA cho video");
+            if (onRecaptchaComplete) {
+                try {
+                    await onRecaptchaComplete();
+                }
+                catch (_) {
+                    /* non-blocking */
+                }
+            }
+        }
+        const rows = rowItems.map((item) => ({
+            prompt: item.textInput.prompt ?? (item.textInput.structuredPrompt?.parts ?? []).map((p) => p.text).join(""),
+            startMediaId: item.startImage ? extractUUIDFromMediaId(item.startImage.mediaId) : undefined,
+            endMediaId: item.endImage ? extractUUIDFromMediaId(item.endImage.mediaId) : undefined,
+            referenceMediaIds: item.referenceImages?.map((r) => extractUUIDFromMediaId(r.mediaId)),
+            referenceAudioIds: item.referenceAudio?.map((a) => a.mediaId),
+        }));
+        let payload;
+        let usedKey = candidates[0].key;
+        for (let c = 0; c < candidates.length; c++) {
+            const { key, verified } = candidates[c];
+            usedKey = key;
+            if (!verified)
+                logger.warn(`[Video] thử khoá model ${key} (từ ${lead.videoModelKey}) — chưa kiểm chứng với Flow`);
+            const buildArgs = async () => {
+                const recaptchaToken = preminted ?? (await this.requestRecaptchaTokens("VIDEO_GENERATION", 1))[0];
+                preminted = undefined; // single-use: any retry or next key needs a fresh one
+                return rows.length === 1
+                    ? buildVideoSubmitArgs({ mode, projectId, modelKey: key, aspectCode, recaptchaToken, ...rows[0] })
+                    : buildVideoBatchArgs({ mode, projectId, modelKey: key, aspectCode, recaptchaToken, rows });
+            };
+            if (isFirstGroup && c === 0)
+                onSubmitFired?.();
+            try {
+                payload = await callFlowRpc(profileId, VIDEO_SUBMIT_RPC[mode], buildArgs, {
+                    userAgent: this.config.userAgent,
+                    sourcePath: `/project/${projectId}`,
+                    timeoutMs: VIDEO_SUBMIT_TIMEOUT_MS,
+                });
+                break;
+            }
+            catch (err) {
+                // 3 = INVALID_ARGUMENT, 5 = NOT_FOUND: how Flow refuses an unknown model key.
+                if (err instanceof FlowRpcError && (err.status === 3 || err.status === 5) && c < candidates.length - 1) {
+                    logger.warn(`[Video] Flow từ chối khoá ${key} (mã ${err.status}) — thử khoá kế tiếp`);
+                    continue;
+                }
+                if (err instanceof FlowRpcError) {
+                    logger.warn(`[Video] ${mode} (${rows.length} hàng) lỗi gốc từ Flow: status=${err.status} ${err.message.slice(0, 300)}`);
+                }
+                const classified = classifyFlowGenError(err);
+                logger.error(`❌ [Video] ${mode} (${rows.length} hàng) lỗi: ${classified?.message ?? classified}`, {
+                    model: key,
+                    project: projectId,
+                });
+                throw classified;
+            }
+        }
+        rememberAcceptedKey(slot, usedKey);
+        // How Flow answers a multi-row call (order, echoed ids) is still being confirmed live: keep the raw reply.
+        if (rows.length > 1) {
+            logger.info(`[Video] ${mode} phản hồi ${rows.length} hàng (thô): ${JSON.stringify(payload)?.slice(0, 1200)}`);
+        }
+        const parsed = parseVideoSubmitResponse(payload);
+        if (parsed.operations.length === 0) {
+            throw new Error(`Flow không trả operation cho video: ${JSON.stringify(payload)?.slice(0, 160)}`);
+        }
+        const { assigned, missingRows, extra } = assignOperationsToRows(parsed.operations, rowItems.length);
+        if (extra > 0) {
+            logger.warn(`[Video] ${mode}: Flow trả ${parsed.operations.length} operation cho ${rowItems.length} hàng — bỏ ${extra} cái thừa`);
+        }
+        if (missingRows.length > 0) {
+            logger.warn(`[Video] ${mode}: Flow chỉ trả ${parsed.operations.length}/${rowItems.length} operation — ${missingRows.length} hàng sẽ gửi lại`);
+        }
+        const operations = assigned.flatMap((op, i) => op
+            ? this.convertMediaArrayToSubmitOperations([{ name: op.operationId, projectId, workflowId: op.workflowId }], rowItems[i].metadata?.sceneId ?? "")
+            : []);
+        const failedItems = missingRows.map((i) => ({ sceneId: rowItems[i].metadata?.sceneId ?? "" }));
+        return { operations, failedItems };
+    }
+    async submitVideoViaFlowSequential(mode, request, onRecaptchaComplete, onSubmitFired) {
         const profileId = this.config.profileId;
         if (!profileId)
             throw new Error("Thiếu profileId — không thể gen video trên Flow");
@@ -832,11 +1039,14 @@ export class Veo3Service {
         // reCAPTCHA is bound to the project page the browser loads.
         this.updateConfig({ veo3ProjectId: projectId });
         const count = request.requests.length;
-        // Keep only the first token in flight. A token minted for a later row can
-        // expire while earlier Flow calls are still running.
-        const [firstToken] = await this.requestRecaptchaTokens("VIDEO_GENERATION", 1);
-        if (!firstToken)
-            throw new Error("Flow không lấy được reCAPTCHA token cho video");
+        // Only the first send uses a pre-minted token. Later sends in the batch mint theirs right
+        // before the POST, like the web client does: a token minted up front sits through the
+        // previous round-trip (several seconds) and request 2/2 of a batch was refused while the
+        // same jobs submitted one by one all went through.
+        const tokens = await this.requestRecaptchaTokens("VIDEO_GENERATION", 1);
+        if (tokens.length < 1) {
+            throw new Error("Không xin được token reCAPTCHA cho video");
+        }
         if (onRecaptchaComplete) {
             try {
                 await onRecaptchaComplete();
@@ -849,6 +1059,7 @@ export class Veo3Service {
         const failedItems = [];
         for (let i = 0; i < count; i++) {
             const item = request.requests[i];
+            let stoppedBy = null;
             const prompt = item.textInput.prompt ?? (item.textInput.structuredPrompt?.parts ?? []).map((p) => p.text).join("");
             const aspectCode = videoAspectCode(item.aspectRatio);
             const slot = modelKeySlot(mode, item.videoModelKey);
@@ -865,10 +1076,10 @@ export class Veo3Service {
                 usedKey = key;
                 if (!verified)
                     logger.warn(`[Video] thử khoá model ${key} (từ ${item.videoModelKey}) — chưa kiểm chứng với Flow`);
-                // The pre-minted token serves the very first send only; every later send needs a new one.
-                let premintConsumed = i > 0 || c > 0;
+                // The pre-minted token serves the very first send only (i === 0, first key); every later send needs a new one.
+                let premintConsumed = c > 0 || i > 0;
                 const buildArgs = async () => {
-                    const recaptchaToken = premintConsumed ? (await this.requestRecaptchaTokens("VIDEO_GENERATION", 1))[0] : firstToken;
+                    const recaptchaToken = premintConsumed ? (await this.requestRecaptchaTokens("VIDEO_GENERATION", 1))[0] : tokens[i];
                     premintConsumed = true;
                     return buildVideoSubmitArgs({
                         mode,
@@ -900,40 +1111,56 @@ export class Veo3Service {
                         logger.warn(`[Video] Flow từ chối khoá ${key} (mã ${err.status}) — thử khoá kế tiếp`);
                         continue;
                     }
-                    if (err instanceof FlowRpcError)
+                    // The classified message below is our own label (any gRPC 7 / HTTP 403 reads as a
+                    // reCAPTCHA failure); keep Flow's raw status and text so the real cause stays visible.
+                    if (err instanceof FlowRpcError) {
                         logger.warn(`[Video] ${mode} request ${i + 1}/${count} lỗi gốc từ Flow: status=${err.status} ${err.message.slice(0, 300)}`);
+                    }
                     const classified = classifyFlowGenError(err);
                     logger.error(`❌ [Video] ${mode} request ${i + 1}/${count} lỗi: ${classified?.message ?? classified}`, {
                         model: key,
                         project: projectId,
                     });
-                    if (operations.length === 0)
-                        throw classified;
-                    failedItems.push({ sceneId: item.metadata?.sceneId ?? "", error: classified });
-                    for (const remaining of request.requests.slice(i + 1))
-                        failedItems.push({ sceneId: remaining.metadata?.sceneId ?? "" });
-                    return { operations, failedItems };
+                    // Earlier requests of this batch are already accepted (and charged) by Flow. Throwing
+                    // would make the queue fail or requeue them too, orphaning those videos — hand back
+                    // what went through and let the caller deal only with the rest.
+                    if (operations.length > 0) {
+                        stoppedBy = classified;
+                        break;
+                    }
+                    throw classified;
                 }
             }
-            rememberAcceptedKey(slot, usedKey);
-            let parsed;
-            try {
-                parsed = parseVideoSubmitResponse(payload);
-                if (parsed.operations.length === 0)
-                    throw new Error(`Flow không trả operation cho video: ${JSON.stringify(payload)?.slice(0, 160)}`);
+            let parsed = null;
+            if (stoppedBy === null) {
+                rememberAcceptedKey(slot, usedKey);
+                try {
+                    parsed = parseVideoSubmitResponse(payload);
+                    if (parsed.operations.length === 0) {
+                        throw new Error(`Flow không trả operation cho video: ${JSON.stringify(payload)?.slice(0, 160)}`);
+                    }
+                }
+                catch (parseErr) {
+                    // Same rule as a failed send: earlier requests are already accepted, so do not throw them away.
+                    if (operations.length === 0)
+                        throw parseErr;
+                    stoppedBy = parseErr;
+                }
             }
-            catch (error) {
-                if (operations.length === 0)
-                    throw error;
-                failedItems.push({ sceneId: item.metadata?.sceneId ?? "", error });
-                for (const remaining of request.requests.slice(i + 1))
-                    failedItems.push({ sceneId: remaining.metadata?.sceneId ?? "" });
-                return { operations, failedItems };
+            if (stoppedBy !== null || parsed === null) {
+                for (let j = i; j < count; j++) {
+                    failedItems.push({
+                        sceneId: request.requests[j].metadata?.sceneId ?? "",
+                        ...(j === i ? { error: stoppedBy } : {}),
+                    });
+                }
+                logger.warn(`[Video] ${mode} batch dừng ở request ${i + 1}/${count}: giữ ${operations.length} video đã gửi, ${count - i} còn lại sẽ gửi lại`);
+                break;
             }
             const sceneId = item.metadata?.sceneId ?? "";
             operations.push(...this.convertMediaArrayToSubmitOperations(parsed.operations.map((o) => ({ name: o.operationId, projectId, workflowId: o.workflowId })), sceneId));
         }
-        return { operations, failedItems };
+        return { operations, ...(failedItems.length > 0 ? { failedItems } : {}) };
     }
     /**
      * Submit video generation (text-to-video) through Flow's `generateVideoText` batchexecute rpc
@@ -1066,7 +1293,6 @@ export class Veo3Service {
             // Mode code: 1 = 2K, 2 = 4K (observed in BOQ SPrCad RPC)
             const modeCode = targetResolution.includes("4K") ? 2 : 1;
             // 1. Primary: Try new BOQ RPC (SPrCad) if profileId is available
-            let boqFailure = null;
             if (this.config.profileId) {
                 // Mint NGOÀI try: cầu captcha hỏng là lỗi riêng, đừng ghi nhầm thành
                 // "BOQ RPC failed" rồi đẩy tiếp sang REST (REST cũng cần token).
@@ -1112,19 +1338,8 @@ export class Veo3Service {
                     // một token reCAPTCHA và một lượt gọi API (đã trừ credit). Ném tiếp.
                     if (boqErr?.isCorruptPayload)
                         throw boqErr;
-                    boqFailure = boqErr;
                     logger.warn(`⚠️ [API Monitor] BOQ RPC (SPrCad) failed (${boqErr?.message || String(boqErr)}), falling back to REST endpoint...`);
                 }
-            }
-            // The REST fallback still belongs to the retired Bearer lane. When no
-            // cached legacy token exists, preserve the real BOQ error instead of
-            // masking it with an impossible "access token required" recovery.
-            if (!this.config.accessToken) {
-                if (boqFailure)
-                    throw boqFailure;
-                const retired = new Error('Google đã tắt access token cũ; không thể dùng REST fallback cho upscale ảnh.');
-                retired.code = 'FLOW_AUTH_RETIRED';
-                throw retired;
             }
             // 2. Fallback: REST endpoint /flow/upsampleImage
             const restRecaptchaToken = await mintRecaptchaToken();
@@ -1268,6 +1483,22 @@ export class Veo3Service {
             logger.warn(`[Batch Images] mã tỉ lệ ${aspectRatio} (=${aspect.code}) chưa được kiểm chứng với Flow`);
         }
         const promptCount = options.prompts.length;
+        const pendingIndices = options.prompts.flatMap((_, index) => options.completedImages?.has(index) ? [] : [index]);
+        if (pendingIndices.length === 0)
+            return options.prompts.map((_, index) => options.completedImages.get(index));
+        const tokens = await this.requestRecaptchaTokens("IMAGE_GENERATION", pendingIndices.length);
+        if (tokens.length < pendingIndices.length) {
+            throw new Error(`Batch tokens insufficient: got ${tokens.length}, need ${pendingIndices.length}`);
+        }
+        const tokenByIndex = new Map(pendingIndices.map((index, position) => [index, tokens[position]]));
+        if (options.onRecaptchaComplete) {
+            try {
+                await options.onRecaptchaComplete();
+            }
+            catch (_) {
+                /* non-blocking */
+            }
+        }
         const timeoutMs = options.timeoutMs ?? (Number(process.env.IMAGE_GEN_TIMEOUT_MS) || 240000);
         const sourcePath = `/project/${options.projectId}`;
         const generateOne = async (promptConfig, index) => {
@@ -1275,11 +1506,12 @@ export class Veo3Service {
             const startedAt = Date.now();
             // Args are rebuilt per attempt: callFlowRpc re-runs them if it re-bootstraps the
             // session, and a reCAPTCHA token must never be sent twice.
+            let firstAttempt = true;
             const buildArgs = async () => {
-                const recaptchaToken = (await this.requestRecaptchaTokens("IMAGE_GENERATION", 1))[0];
-                if (index === 0) {
-                    try { await options.onRecaptchaComplete?.(); } catch { /* Progress is best effort. */ }
-                }
+                const recaptchaToken = firstAttempt
+                    ? tokenByIndex.get(index)
+                    : (await this.requestRecaptchaTokens("IMAGE_GENERATION", 1))[0];
+                firstAttempt = false;
                 return buildGenerateImageArgs({
                     projectId: options.projectId,
                     prompt: promptConfig.prompt,
@@ -1291,7 +1523,7 @@ export class Veo3Service {
                 });
             };
             // Fired at SUBMIT-START so the inter-batch delay counts from submit.
-            if (index === 0)
+            if (index === pendingIndices[0])
                 options.onSubmitFired?.();
             let payload;
             try {
@@ -1314,13 +1546,14 @@ export class Veo3Service {
             return result;
         };
         logger.info(`🚀 [Batch Images] Gen ${promptCount} ảnh qua Flow ogiZ0b...`);
-        const settled = await Promise.allSettled(options.prompts.map((prompt, index) => {
-            if (options.completedImages?.has(index)) return options.completedImages.get(index);
-            return profileImageScheduler.run(profileId, async () => {
-                const result = await generateOne(prompt, index);
-                options.completedImages?.set(index, result);
-                return result;
-            }, options.isCancelled);
+        const settled = await Promise.allSettled(options.prompts.map(async (prompt, index) => {
+            if (options.completedImages?.has(index))
+                return options.completedImages.get(index);
+            if (options.isCancelled?.())
+                throw new Error('Batch image cancelled');
+            const result = await generateOne(prompt, index);
+            options.completedImages?.set(index, result);
+            return result;
         }));
         const results = [];
         let firstError = null;
@@ -1845,9 +2078,9 @@ export class Veo3Service {
         logger.info(`📤 [Upload Image] BOQ maseQ project=${projectId} ${buf.length} byte ${mime}`);
         try {
             const payload = await callFlowRpc(profileId, FLOW_RPC.uploadImage, async () => {
-                // Upload là thao tác ảnh → IMAGE_GENERATION (giống SPrCad). Token
-                // single-use nên mint trong builder: flowBoq gọi lại builder mỗi lượt thử.
-                const [recaptchaToken] = await this.requestRecaptchaTokens("IMAGE_GENERATION", 1);
+                // Web Flow mint action UPLOAD_IMAGE cho upload (đối chiếu gói reload).
+                // Token single-use nên mint trong builder: flowBoq gọi lại builder mỗi lượt thử.
+                const [recaptchaToken] = await this.requestRecaptchaTokens("UPLOAD_IMAGE", 1);
                 return buildMaseQArgs({
                     projectId,
                     recaptchaToken,
