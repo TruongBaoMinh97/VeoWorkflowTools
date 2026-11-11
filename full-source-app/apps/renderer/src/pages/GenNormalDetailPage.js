@@ -1,6 +1,5 @@
 const P4 = ({ projectId: t, onBack: s, studioMode = false }) => {
     const studioDelayOptions = [25, 30, 35, 40, 45, 50, 55, 60];
-    const delayOptions = studioMode ? studioDelayOptions : od;
     const r = u.useRef(!1);
     u.useEffect(
       () => (
@@ -88,14 +87,17 @@ const P4 = ({ projectId: t, onBack: s, studioMode = false }) => {
       [I, U] = u.useState(!1),
       [V, q] = u.useState(""),
       [X, O] = u.useState(8),
+      isVideoMode = A !== "IMAGE_GENERATION" && A !== "IMAGE_GENERATION_BATCH_REFS",
+      delayOptions = studioMode || isVideoMode ? studioDelayOptions : od,
+      defaultDelay = studioMode || isVideoMode ? 30 : od[0],
       [H, ae] = u.useState(studioMode ? 30 : 12),
       ue = (E) => {
-        const D = delayOptions.includes(E) ? E : delayOptions[0];
+        const D = delayOptions.includes(E) ? E : defaultDelay;
         ae(D);
       },
       de = 12,
       ce = Math.max(1, Math.min(X, de)),
-      Q = delayOptions.includes(H) ? H : delayOptions[0],
+      Q = delayOptions.includes(H) ? H : defaultDelay,
       {
         loading: se,
         uploadingFrames: ie,
@@ -6735,7 +6737,7 @@ Prompt 3`,
                         }),
                         e.jsx("p", {
                           className: "text-[11px] text-slate-400 mt-1.5",
-                          children: studioMode
+                          children: studioMode || isVideoMode
                             ? "Nghỉ giữa các đợt gửi, 25–60s (mặc định 30s). Càng dài càng ít bị reCAPTCHA 403."
                             : "5-7s: chế độ nhanh, chỉ dùng khi extension bridge ổn (score reCAPTCHA cao). 10-25s: an toàn mặc định.",
                         }),
@@ -6804,9 +6806,7 @@ Prompt 3`,
                               : e.jsxs("p", {
                                   className:
                                     "text-[11px] text-slate-400 mt-1.5",
-                                  children: studioMode
-                                    ? [we > 1 ? `Gửi ${we} video trong 1 yêu cầu chung với 1 token reCAPTCHA, như web Flow (khác model hoặc tỉ lệ sẽ tách yêu cầu). ` : "Mỗi video 1 yêu cầu riêng. ", "Video async — nặng hơn ảnh, để luồng (concurrency) thấp khi test."]
-                                    : ["Gửi ", we, " video cùng mode chung 1 batchId (server kẹp tối đa 2 để an toàn). Video async — nặng hơn ảnh, để luồng (concurrency) thấp khi test."],
+                                  children: [we > 1 ? `Gửi ${we} video trong 1 yêu cầu chung với 1 token reCAPTCHA, như web Flow (khác model hoặc tỉ lệ sẽ tách yêu cầu). ` : "Mỗi video 1 yêu cầu riêng. ", "Video async — nặng hơn ảnh, để luồng (concurrency) thấp khi test."],
                                 }),
                         ],
                       });
@@ -7003,8 +7003,8 @@ Prompt 3`,
           title: hc === "start" ? "Sẵn sàng bắt đầu gen?" : "Sẵn sàng tạo job?",
           description:
             hc === "start"
-              ? `Sắp queue ${Mt.length} job để chạy. Chrome của profile sẽ mở khi cần xác thực với Google Flow.`
-              : "Sắp tạo job từ prompts. Chrome của profile sẽ lấy mã bảo mật từ Google Flow khi cần.",
+              ? `Sắp queue ${Mt.length} job để chạy. Trình duyệt CAPTCHA có thể mở để anh đăng nhập Google Flow khi cần.`
+              : "Sắp tạo job từ prompts. Trình duyệt CAPTCHA sẽ lấy mã từ Google Flow khi cần.",
           onCancel: mu,
           onConfirm: hu,
         }),

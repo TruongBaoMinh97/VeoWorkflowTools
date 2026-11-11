@@ -42,11 +42,26 @@ const ERR_QUOTA_UPGRADEABLE = 'QUOTA_UPGRADEABLE:Profile cần nâng cấp gói 
 // dần theo số lần dính liên tiếp (reset khi submit thành công), thay vì 30-60s của
 // 429 thường vốn quá ngắn để trần này hạ xuống.
 const TRAFFIC_LIMIT_BACKOFF_SEC = [120, 300, 600];
+const RECAPTCHA_RECOVERY_MIN_FAILURES = 3;
+const RECAPTCHA_POST_REJECT_DELAY_SEC = 25;
+const MIN_VIDEO_DELAY_SECONDS = 25;
+const DEFAULT_VIDEO_DELAY_SECONDS = 30;
+const MAX_VIDEO_DELAY_SECONDS = 60;
 /** An absent provider error body does not make an otherwise retryable batch terminal. */
 export function isTerminalVideoBatchError(message, error) {
     return isNonRetryableError(message) ||
         (typeof error?.errorText === 'string' && error.errorText.length > 0 && isNonRetryableError(error.errorText)) ||
         error?.isNonRetryable === true;
+}
+/** Only rows without an accepted operation may be sent again. */
+export function findUnsubmittedVideoItems(sceneIdToJobMap, submittedJobIds, failedItems = []) {
+    const failures = new Map(failedItems.map(item => [item.sceneId, item]));
+    const missing = [];
+    for (const [sceneId, entry] of sceneIdToJobMap) {
+        if (!submittedJobIds.has(entry.queuedJob.jobId))
+            missing.push(failures.get(sceneId) ?? { sceneId });
+    }
+    return missing;
 }
 export class GenNormalQueueManager {
     constructor() {
@@ -1109,12 +1124,10 @@ export class GenNormalQueueManager {
         // Veo3: 4 POST g\u1ea7n nh\u01b0 song song, CHUNG 1 batchId, m\u1ed7i POST 1 token ri\u00eang).
         // Video gi\u1eef b\u1ea3o th\u1ee7 = 1. Override cap \u1ea3nh qua env MAX_BATCH_SIZE_SAFE_IMAGE.
         const MAX_BATCH_SIZE_SAFE_IMAGE = Number(process.env.MAX_BATCH_SIZE_SAFE_IMAGE) || 4;
-        // Video batch (same batchId+sessionId, N sequential POSTs, sceneId/operation
-        // mapping) is now enabled for testing. Kept CONSERVATIVE: video is async +
-        // heavier and has no per-profile in-flight ceiling (unlike image), so
-        // concurrency × batchSize could stack many submits. Default 2, env-raisable
-        // (route still caps at 4). Set MAX_BATCH_SIZE_SAFE_VIDEO=1 to disable.
-        const MAX_BATCH_SIZE_SAFE_VIDEO = Number(process.env.MAX_BATCH_SIZE_SAFE_VIDEO) || 2;
+        // Veo3Studio 1.9.8 sends up to four matching video rows in one Flow call.
+        // Video is async and heavier than image, so keep the environment override
+        // for installations that need a smaller burst.
+        const MAX_BATCH_SIZE_SAFE_VIDEO = Number(process.env.MAX_BATCH_SIZE_SAFE_VIDEO) || 4;
         const MAX_BATCH_SIZE_SAFE = hasVideoJob
             ? MAX_BATCH_SIZE_SAFE_VIDEO
             : MAX_BATCH_SIZE_SAFE_IMAGE;
@@ -1143,12 +1156,16 @@ export class GenNormalQueueManager {
         // Throttle giữa mỗi submit/profile. Floor 0s cho extension mode (captcha
         // mint MAIN-world rẻ + score cao nên burst không trip bot detection), 2s
         // cho non-extension fallback. User vẫn có thể set explicit qua UI.
-        const MIN_DELAY_SECONDS_SAFE = isExtensionBridgeMode() ? 0 : 2;
+        const MIN_DELAY_SECONDS_SAFE = hasVideoJob ? MIN_VIDEO_DELAY_SECONDS : isExtensionBridgeMode() ? 0 : 2;
         const projectDelay = project.delaySeconds;
-        let delaySeconds = projectDelay || this.getRandomDelay();
+        let delaySeconds = projectDelay || (hasVideoJob ? DEFAULT_VIDEO_DELAY_SECONDS : this.getRandomDelay());
         if (SAFE_CAP_ENABLED && delaySeconds < MIN_DELAY_SECONDS_SAFE) {
             logger.warn(`[GenNormal] ⚠️  Project ${projectId} delaySeconds ${delaySeconds} raised to ${MIN_DELAY_SECONDS_SAFE}s (safety floor)`);
             delaySeconds = MIN_DELAY_SECONDS_SAFE;
+        }
+        if (SAFE_CAP_ENABLED && hasVideoJob && delaySeconds > MAX_VIDEO_DELAY_SECONDS) {
+            logger.warn(`[GenNormal] ⚠️  Project ${projectId} delaySeconds ${delaySeconds} lowered to ${MAX_VIDEO_DELAY_SECONDS}s (video ceiling)`);
+            delaySeconds = MAX_VIDEO_DELAY_SECONDS;
         }
         this.projectDelaySeconds.set(projectId, delaySeconds);
         logger.info(`[GenNormal] Init queue ${projectId} (concurrency=${concurrency} batch=${batchSize} delay=${delaySeconds}s jobs=${project.jobs.length} profiles=${project.profiles.length})`);
@@ -3696,13 +3713,15 @@ export class GenNormalQueueManager {
                                 const failureCount = this.increment403FailureCount(queuedJob.profileId);
                                 const isSilentRetry = failureCount <= 3;
                                 if (isSilentRetry) {
-                                    delaySeconds = Math.max(25, this.getRecaptchaSilentRetryDelaySec());
+                                    delaySeconds = Math.max(this.getRecaptchaSilentRetryDelaySec(), RECAPTCHA_POST_REJECT_DELAY_SEC);
                                     logger.warn(`[GenNormal] 🔄 Silent reCAPTCHA retry #${failureCount}/3 (batch) for profile ${queuedJob.profileId.substring(0, 8)}... - retrying in ${delaySeconds}s without notifying user`);
                                 }
                                 else {
-                                    delaySeconds = Math.max(25, this.getEscalatingDelay(queuedJob.profileId));
+                                    delaySeconds = Math.max(this.getEscalatingDelay(queuedJob.profileId), RECAPTCHA_POST_REJECT_DELAY_SEC);
                                     logger.warn(`[GenNormal] ⚠️ reCAPTCHA failed ${failureCount} times (batch), escalating delay to ${delaySeconds}s and notifying user`);
                                 }
+                                if (failureCount >= RECAPTCHA_RECOVERY_MIN_FAILURES)
+                                    this.triggerExtensionAnchorReset(queuedJob.profileId, failureCount);
                                 if (failureCount >= 3 && this.shouldRunRecovery(queuedJob.profileId, 'rotate-ua-batch')) {
                                     try {
                                         if (queue && (queue.isSubmitting || this.getOtherRunningJobs(queue, batchJobs.length) > 0)) {
@@ -3784,7 +3803,7 @@ export class GenNormalQueueManager {
                                 failureCount: this.profile403FailureCount.get(queuedJob.profileId) || 0,
                                 delaySeconds
                             });
-                            if (isRecaptchaFailure && this.shouldRunRecovery(queuedJob.profileId, 'reset-prewarm-batch')) {
+                            if (isRecaptchaFailure && (this.profile403FailureCount.get(queuedJob.profileId) || 0) >= RECAPTCHA_RECOVERY_MIN_FAILURES && this.shouldRunRecovery(queuedJob.profileId, 'reset-prewarm-batch')) {
                                 try {
                                     const { accountLocaleService } = await import('../../lib/accountLocaleService.js');
                                     const cachedLocale = accountLocaleService.getCachedLocale(queuedJob.profileId);
@@ -3843,6 +3862,7 @@ export class GenNormalQueueManager {
                 // Process results by matching sceneId for accurate job mapping
                 let matchedCount = 0;
                 let unmatchedCount = 0;
+                const submittedJobIds = new Set();
                 if (batchResponse.operations && batchResponse.operations.length > 0) {
                     for (const operation of batchResponse.operations) {
                         const matchedJob = sceneIdToJobMap.get(operation.sceneId);
@@ -3924,9 +3944,15 @@ export class GenNormalQueueManager {
                                 }
                             }
                         }
+                        submittedJobIds.add(batchQueuedJob.jobId);
                         matchedCount++;
                     }
                 }
+                const unsubmittedItems = findUnsubmittedVideoItems(sceneIdToJobMap, submittedJobIds, batchResponse.failedItems ?? []);
+                if (unsubmittedItems.length > 0 && unmatchedCount === 0)
+                    await this.requeueUnsubmittedVideoJobs(sceneIdToJobMap, unsubmittedItems);
+                else if (unsubmittedItems.length > 0)
+                    logger.warn(`[GenNormal] ${unsubmittedItems.length} video chưa khớp nhưng ${unmatchedCount} operation không khớp sceneId — giữ nguyên để tránh gửi trùng`);
                 if (unmatchedCount > 0) {
                     // Only log batch summary when there are unmatched results — the matched
                     // case is already announced by per-job "submitted successfully" lines.
@@ -3935,9 +3961,7 @@ export class GenNormalQueueManager {
                 // ✅ Reset 403 failure counter — captcha worked, profile is healthy.
                 // Without this, the count from a previous failed run carries over and
                 // the next batch starts already in penalty territory.
-                if (batchResponse.failedItems?.length && unmatchedCount === 0)
-                    await this.requeueUnsubmittedVideoJobs(sceneIdToJobMap, batchResponse.failedItems);
-                if (matchedCount > 0 && !batchResponse.failedItems?.length) {
+                if (matchedCount > 0 && unsubmittedItems.length === 0) {
                     this.reset403FailureCount(job.profileId);
                     captchaManager.notifySuccess();
                 }

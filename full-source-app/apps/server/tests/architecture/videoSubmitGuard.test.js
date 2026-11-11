@@ -3,7 +3,7 @@ import { FlowRpcError } from '../../src/lib/flowBoq.js';
 import { prisma } from '../../src/lib/prisma.js';
 import { classifyFlowGenError } from '../../src/services/veo3/flowImageGen.js';
 import { VERIFICATION_REQUIRED_CODE } from '../../src/services/veo3/verificationFailure.js';
-import { GenNormalQueueManager } from '../../src/modules/genNormal/genNormalQueueManager.js';
+import { findUnsubmittedVideoItems, GenNormalQueueManager } from '../../src/modules/genNormal/genNormalQueueManager.js';
 
 describe('Flow video submission safeguards', () => {
     afterEach(() => vi.restoreAllMocks());
@@ -67,5 +67,20 @@ describe('Flow video submission safeguards', () => {
 
         manager.releaseSubmission('job-1');
         expect(manager.submittingJobs.size).toBe(0);
+    });
+
+    it('retries only video rows without a matching accepted operation', () => {
+        const scenes = new Map([
+            ['scene-1', { queuedJob: { jobId: 'job-1' } }],
+            ['scene-2', { queuedJob: { jobId: 'job-2' } }],
+            ['scene-3', { queuedJob: { jobId: 'job-3' } }],
+        ]);
+        const rejected = { sceneId: 'scene-2', error: new Error('temporary 429') };
+
+        expect(findUnsubmittedVideoItems(scenes, new Set(['job-1']), [rejected])).toEqual([
+            rejected,
+            { sceneId: 'scene-3' },
+        ]);
+        expect(findUnsubmittedVideoItems(scenes, new Set(['job-1', 'job-2', 'job-3']), [rejected])).toEqual([]);
     });
 });

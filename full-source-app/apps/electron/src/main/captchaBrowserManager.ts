@@ -47,7 +47,6 @@ const {
   getRandomFreePort,
   waitForDebugPort,
   logChromeSpawn,
-  getAuthenticatedFlowPage,
 } = require('./systemBrowserLogin') as {
   killOrphanChromeForProfile(profileDir: string): Promise<void>;
   getRandomFreePort(): Promise<number>;
@@ -61,10 +60,15 @@ const {
     },
   ): Promise<void>;
   logChromeSpawn(reason: string): void;
-  getAuthenticatedFlowPage(profileId: string): Promise<PageLike>;
 };
 const { mainLog } = require('./mainLogger') as {
   mainLog: { info(...args: unknown[]): void };
+};
+const { globalProxyClient } = require('./globalProxyClient') as {
+  globalProxyClient: {
+    poll(): Promise<void>;
+    getSocks5Rule(): string | null;
+  };
 };
 
 const FLOW_URL = 'https://flow.google.com/';
@@ -72,6 +76,11 @@ const SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 const MINT_TIMEOUT_MS = 30_000;
 const CHROME_START_TIMEOUT_MS = 20_000;
 const HARD_RESET_SETTLE_MS = 2_500;
+const MAX_QUEUED_MINTS = 6;
+const HARD_RESET_AFTER_MINTS = (() => {
+  const configured = Number(process.env.CAPTCHA_HARD_ROTATE_EVERY);
+  return Number.isInteger(configured) && configured >= 0 ? configured : 12;
+})();
 
 export type CaptchaResetKind = 'soft_reset' | 'hard_reset';
 
@@ -108,6 +117,12 @@ let flowPage: PageLike | null = null;
 let chromeProcess: ChildProcess | null = null;
 let launchPromise: Promise<void> | null = null;
 let shuttingDown = false;
+let mintChain: Promise<void> = Promise.resolve();
+let queuedMints = 0;
+let consecutiveMintTimeouts = 0;
+let mintsSinceReset = 0;
+let resetBeforeNextMint = false;
+let proxyRuleAtLaunch: string | null = null;
 
 const state: CaptchaBrowserStatus = {
   running: false,
@@ -128,7 +143,7 @@ function log(message: string): void {
   mainLog.info(`[CaptchaBrowser] ${message}`);
 }
 
-function chromeArgs(profileDir: string, port: number): string[] {
+function chromeArgs(profileDir: string, port: number, proxyRule: string | null): string[] {
   return [
     `--user-data-dir=${profileDir}`,
     '--no-first-run',
@@ -140,6 +155,7 @@ function chromeArgs(profileDir: string, port: number): string[] {
     '--window-size=1100,800',
     `--remote-debugging-port=${port}`,
     '--remote-debugging-address=127.0.0.1',
+    ...(proxyRule ? [`--proxy-server=${proxyRule}`, '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'] : []),
     FLOW_URL,
   ];
 }
@@ -161,6 +177,7 @@ function cleanupBrowserRefs(): void {
   }
   state.running = false;
   state.pageUrl = null;
+  proxyRuleAtLaunch = null;
 }
 
 async function injectAntiHijackDefense(page: PageLike): Promise<void> {
@@ -258,6 +275,10 @@ export async function ensureCaptchaBrowser(): Promise<CaptchaBrowserStatus> {
   if (shuttingDown) {
     throw new CaptchaBrowserError('App đang thoát', 'CHROME_LAUNCH_FAILED');
   }
+  await globalProxyClient.poll();
+  const proxyRule = globalProxyClient.getSocks5Rule();
+  if (browser?.connected && proxyRuleAtLaunch !== proxyRule)
+    await closeCaptchaBrowser();
   if (browser?.connected && flowPage && !flowPage.isClosed()) {
     return getCaptchaBrowserStatus();
   }
@@ -287,7 +308,7 @@ export async function ensureCaptchaBrowser(): Promise<CaptchaBrowserStatus> {
     const spawnTimeMs = Date.now();
     let stderrTail = '';
     logChromeSpawn('captcha');
-    const child = spawn(executable, chromeArgs(profileDir, port), {
+    const child = spawn(executable, chromeArgs(profileDir, port, proxyRule), {
       detached: false,
       stdio: ['ignore', 'ignore', 'pipe'],
     });
@@ -329,6 +350,7 @@ export async function ensureCaptchaBrowser(): Promise<CaptchaBrowserStatus> {
       }
     });
     await ensureFlowPage();
+    proxyRuleAtLaunch = proxyRule;
     state.running = true;
     state.pageUrl = flowPage?.url() ?? null;
     state.lastError = null;
@@ -354,10 +376,10 @@ function safeFrameLabel(frameUrl: string): string {
   }
 }
 
-async function mintFromFlowFrames(page: PageLike, action: string): Promise<string> {
+async function mintFromFlowFrames(page: PageLike, action: string, cancelled: () => boolean): Promise<string> {
   const deadline = Date.now() + (MINT_TIMEOUT_MS - 5_000);
   let loaderStatus = 'not-needed';
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !cancelled()) {
     try {
       const result = await tryMintCaptchaFromFrames(page.frames(), SITE_KEY, action);
       if (result) {
@@ -396,37 +418,29 @@ async function mintFromFlowFrames(page: PageLike, action: string): Promise<strin
   throw new Error(`GRECAPTCHA_UNAVAILABLE: Không tìm thấy frame hoặc hàm execute hợp lệ sau khi timeout (page=${diagnostic.origin}${diagnostic.path}, sdk=${diagnostic.sdk}, execute=${diagnostic.execute}, frames=${frameCount})`);
 }
 
-async function activeMintProfileId(): Promise<string> {
-  const secret = fs.readFileSync(path.join(app.getPath('userData'), 'captcha-bridge.secret'), 'utf8').trim();
-  const port = Number(process.env.PORT) || 4000;
-  const response = await fetch(`http://127.0.0.1:${port}/api/internal/captcha/active-mint-profile`, {
-    headers: { 'x-local-auth': secret },
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!response.ok)
-    throw new CaptchaBrowserError(`Không lấy được profile đang tạo ảnh (HTTP ${response.status})`, 'MINT_FAILED');
-  const data = await response.json() as { profileId?: unknown };
-  if (typeof data.profileId !== 'string' || !/^[a-zA-Z0-9_-]{8,80}$/.test(data.profileId))
-    throw new CaptchaBrowserError('Không xác định được profile đang tạo ảnh; hãy thử lại từ job.', 'MINT_FAILED');
-  return data.profileId;
-}
-
-export async function mintCaptchaToken(action: string): Promise<string> {
-  // The legacy IPC bridge passes only `action`; the backend holds the selected
-  // profile for this serialized mint. Never mint on the anonymous /about page.
-  const profileId = await activeMintProfileId();
-  const page = await getAuthenticatedFlowPage(profileId);
+async function mintCaptchaTokenSerial(action: string): Promise<string> {
+  await ensureCaptchaBrowser();
+  if (resetBeforeNextMint) {
+    await resetCaptchaBrowser('hard_reset');
+  }
+  const page = await ensureFlowPage();
   const startedAt = Date.now();
+  let cancelled = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const token = await Promise.race([
-      mintFromFlowFrames(page, action),
+      mintFromFlowFrames(page, action, () => cancelled),
       new Promise<never>((_resolve, reject) => {
-        setTimeout(
+        timeout = setTimeout(
           () => reject(new CaptchaBrowserError('Mint quá thời gian', 'MINT_TIMEOUT')),
           MINT_TIMEOUT_MS,
         );
       }),
     ]);
+    consecutiveMintTimeouts = 0;
+    mintsSinceReset += 1;
+    if (HARD_RESET_AFTER_MINTS > 0 && mintsSinceReset >= HARD_RESET_AFTER_MINTS)
+      resetBeforeNextMint = true;
     state.lastMintAt = Date.now();
     state.lastMintDurationMs = state.lastMintAt - startedAt;
     state.mintCount += 1;
@@ -435,13 +449,34 @@ export async function mintCaptchaToken(action: string): Promise<string> {
     return token;
   }
   catch (error) {
+    cancelled = true;
     state.failureCount += 1;
     state.lastError = error instanceof Error ? error.message : String(error);
+    if ((error instanceof CaptchaBrowserError && error.code === 'MINT_TIMEOUT') ||
+        state.lastError.startsWith('GRECAPTCHA_UNAVAILABLE')) {
+      consecutiveMintTimeouts += 1;
+      if (consecutiveMintTimeouts >= 2) {
+        consecutiveMintTimeouts = 0;
+        resetBeforeNextMint = true;
+      }
+    }
     if (error instanceof CaptchaBrowserError) {
       throw error;
     }
     throw new CaptchaBrowserError(state.lastError, 'MINT_FAILED');
   }
+  finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export function mintCaptchaToken(action: string): Promise<string> {
+  if (queuedMints >= MAX_QUEUED_MINTS)
+    return Promise.reject(new CaptchaBrowserError('Hàng chờ mint đầy — captcha browser đang bận', 'MINT_FAILED'));
+  queuedMints += 1;
+  const result = mintChain.then(() => mintCaptchaTokenSerial(action), () => mintCaptchaTokenSerial(action));
+  mintChain = result.then(() => undefined, () => undefined);
+  return result.finally(() => { queuedMints -= 1; });
 }
 
 async function clearCaptchaCookies(page: PageLike): Promise<void> {
@@ -480,10 +515,10 @@ export async function resetCaptchaBrowser(kind: CaptchaResetKind): Promise<void>
 
   await clearCaptchaCookies(page);
   await page.goto('about:blank', { waitUntil: 'domcontentloaded' }).catch(() => undefined);
-  await page
-    .goto(FLOW_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-    .catch(() => undefined);
+  await page.goto(FLOW_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await new Promise((resolve) => setTimeout(resolve, HARD_RESET_SETTLE_MS));
+  mintsSinceReset = 0;
+  resetBeforeNextMint = false;
   state.pageUrl = page.url();
   log('hard reset xong');
 }

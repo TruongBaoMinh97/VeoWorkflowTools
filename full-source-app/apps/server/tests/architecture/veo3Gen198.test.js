@@ -20,7 +20,7 @@ import { getModelKeyForGenerationType } from '../../src/utils/videoModelResolver
 import { ProxyGate } from '../../src/lib/proxyGate.js';
 
 describe('Veo3Studio 1.9.8 generation core in VeoWorkflow', () => {
-    it('keeps CAPTCHA token requests bound to the selected profile', async () => {
+    it('keeps selected-profile context available to the legacy Electron bridge', async () => {
         mint.mockResolvedValue({ token: 'token-for-minh' });
         const service = new Veo3Service({ profileId: 'minh' });
 
