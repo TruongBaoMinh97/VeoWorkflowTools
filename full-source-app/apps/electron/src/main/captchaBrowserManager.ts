@@ -6,6 +6,8 @@ import {
   type CaptchaFrameLike,
 } from './captchaFrameMint';
 import { ensureFlowEnterpriseScript } from './captchaEnterpriseLoader';
+import { readCaptchaEngine, writeCaptchaEngine, type CaptchaEngine } from './captchaEngineStore';
+import { describeCloakExitCode, findCloakBrowserExecutable, hasCloakLicense } from './cloakBrowserPath';
 
 interface CdpSessionLike {
   send(method: string, params: Record<string, unknown>): Promise<unknown>;
@@ -93,6 +95,7 @@ export type CaptchaBrowserErrorCode =
   | 'MINT_FAILED';
 
 export interface CaptchaBrowserStatus {
+  engine: CaptchaEngine;
   running: boolean;
   pageUrl: string | null;
   lastMintAt: number | null;
@@ -123,8 +126,10 @@ let consecutiveMintTimeouts = 0;
 let mintsSinceReset = 0;
 let resetBeforeNextMint = false;
 let proxyRuleAtLaunch: string | null = null;
+let engineAtLaunch: CaptchaEngine | null = null;
 
 const state: CaptchaBrowserStatus = {
+  engine: 'chrome',
   running: false,
   pageUrl: null,
   lastMintAt: null,
@@ -134,8 +139,13 @@ const state: CaptchaBrowserStatus = {
   failureCount: 0,
 };
 
-function captchaProfileDir(): string {
-  return path.join(app.getPath('userData'), 'captcha-browser');
+function selectedEngine(): CaptchaEngine {
+  const available = findCloakBrowserExecutable() && hasCloakLicense();
+  return readCaptchaEngine(app.getPath('userData'), available ? 'cloak' : 'chrome');
+}
+
+function captchaProfileDir(engine: CaptchaEngine): string {
+  return path.join(app.getPath('userData'), engine === 'cloak' ? 'captcha-browser-cloak' : 'captcha-browser');
 }
 
 function log(message: string): void {
@@ -178,6 +188,24 @@ function cleanupBrowserRefs(): void {
   state.running = false;
   state.pageUrl = null;
   proxyRuleAtLaunch = null;
+  engineAtLaunch = null;
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onExit = () => { clearTimeout(timer); resolve(true); };
+    const timer = setTimeout(() => { child.off('exit', onExit); resolve(false); }, timeoutMs);
+    child.once('exit', onExit);
+  });
+}
+
+async function stopBrowserProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try { child.kill('SIGTERM'); } catch { /* Already exited. */ }
+  if (await waitForChildExit(child, 5_000)) return;
+  try { child.kill('SIGKILL'); } catch { /* Best-effort cleanup. */ }
+  await waitForChildExit(child, 2_000);
 }
 
 async function injectAntiHijackDefense(page: PageLike): Promise<void> {
@@ -277,7 +305,8 @@ export async function ensureCaptchaBrowser(): Promise<CaptchaBrowserStatus> {
   }
   await globalProxyClient.poll();
   const proxyRule = globalProxyClient.getSocks5Rule();
-  if (browser?.connected && proxyRuleAtLaunch !== proxyRule)
+  const engine = selectedEngine();
+  if (browser?.connected && (proxyRuleAtLaunch !== proxyRule || engineAtLaunch !== engine))
     await closeCaptchaBrowser();
   if (browser?.connected && flowPage && !flowPage.isClosed()) {
     return getCaptchaBrowserStatus();
@@ -291,53 +320,65 @@ export async function ensureCaptchaBrowser(): Promise<CaptchaBrowserStatus> {
     cleanupBrowserRefs();
     let executable: string;
     try {
-      executable = resolveChromeExecutable();
+      if (engine === 'cloak') {
+        executable = findCloakBrowserExecutable() ?? '';
+        if (!executable) throw new Error('Chạy `cloakbrowser install` để cài trình duyệt.');
+        if (!hasCloakLicense()) throw new Error('Chạy `cloakbrowser login` để đăng nhập khóa miễn phí.');
+      }
+      else executable = resolveChromeExecutable();
     }
     catch (error) {
       throw new CaptchaBrowserError(
-        `Không tìm thấy Google Chrome trên máy: ${error instanceof Error ? error.message : String(error)}`,
+        `Không dùng được ${engine === 'cloak' ? 'CloakBrowser' : 'Google Chrome'}: ${error instanceof Error ? error.message : String(error)}`,
         'CHROME_NOT_FOUND',
       );
     }
 
-    const profileDir = captchaProfileDir();
+    const profileDir = captchaProfileDir(engine);
     fs.mkdirSync(profileDir, { recursive: true });
     await killOrphanChromeForProfile(profileDir);
 
-    const port = await getRandomFreePort();
-    const spawnTimeMs = Date.now();
-    let stderrTail = '';
-    logChromeSpawn('captcha');
-    const child = spawn(executable, chromeArgs(profileDir, port, proxyRule), {
-      detached: false,
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    child.stderr?.on('data', (chunk: Buffer | string) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-2_000);
-    });
-    chromeProcess = child;
-
-    try {
-      await waitForDebugPort(port, {
-        child,
-        spawnTimeMs,
-        timeoutMs: CHROME_START_TIMEOUT_MS,
-        getStderrTail: () => stderrTail,
+    let port = 0;
+    let child: ChildProcess | null = null;
+    for (let attempt = 1; attempt <= (engine === 'cloak' ? 3 : 1); attempt += 1) {
+      port = await getRandomFreePort();
+      const spawnTimeMs = Date.now();
+      let stderrTail = '';
+      logChromeSpawn(`captcha-${engine}`);
+      child = spawn(executable, chromeArgs(profileDir, port, proxyRule), {
+        detached: false,
+        stdio: ['ignore', 'ignore', 'pipe'],
       });
-    }
-    catch (error) {
+      child.stderr?.on('data', (chunk: Buffer | string) => {
+        stderrTail = (stderrTail + chunk.toString()).slice(-2_000);
+      });
+      chromeProcess = child;
       try {
-        child.kill('SIGTERM');
+        await waitForDebugPort(port, {
+          child,
+          spawnTimeMs,
+          timeoutMs: CHROME_START_TIMEOUT_MS,
+          getStderrTail: () => stderrTail,
+        });
+        break;
       }
-      catch {
-        // Best-effort cleanup.
+      catch (error) {
+        const exitCode = (error as { exitCode?: number | null }).exitCode ?? child.exitCode;
+        await stopBrowserProcess(child);
+        chromeProcess = null;
+        if (engine === 'cloak' && exitCode === 76 && attempt < 3) {
+          log('CloakBrowser đang hết chỗ trong gói miễn phí; thử lại sau 8 giây');
+          await new Promise((resolve) => setTimeout(resolve, 8_000));
+          continue;
+        }
+        throw new CaptchaBrowserError(
+          (engine === 'cloak' && describeCloakExitCode(exitCode)) ||
+            `${engine === 'cloak' ? 'CloakBrowser' : 'Chrome'} không mở được cổng gỡ lỗi: ${error instanceof Error ? error.message : String(error)}`,
+          'CHROME_TIMEOUT',
+        );
       }
-      chromeProcess = null;
-      throw new CaptchaBrowserError(
-        `Chrome không mở được cổng gỡ lỗi: ${error instanceof Error ? error.message : String(error)}`,
-        'CHROME_TIMEOUT',
-      );
     }
+    if (!child) throw new CaptchaBrowserError('Không mở được trình duyệt CAPTCHA', 'CHROME_LAUNCH_FAILED');
 
     browser = await connect({
       browserURL: `http://127.0.0.1:${port}`,
@@ -345,16 +386,18 @@ export async function ensureCaptchaBrowser(): Promise<CaptchaBrowserStatus> {
     });
     browser.on('disconnected', () => {
       if (!shuttingDown) {
-        log('Chrome đã đóng — provider cdp sẽ mở lại ở lần mint kế tiếp');
+        log(`${engine === 'cloak' ? 'CloakBrowser' : 'Chrome'} đã đóng — provider cdp sẽ mở lại ở lần mint kế tiếp`);
         cleanupBrowserRefs();
       }
     });
     await ensureFlowPage();
     proxyRuleAtLaunch = proxyRule;
+    engineAtLaunch = engine;
+    state.engine = engine;
     state.running = true;
     state.pageUrl = flowPage?.url() ?? null;
     state.lastError = null;
-    log(`sẵn sàng (port ${port}, pid ${child.pid ?? 'unknown'})`);
+    log(`${engine} sẵn sàng (port ${port}, pid ${child.pid ?? 'unknown'})`);
   })();
 
   try {
@@ -526,24 +569,40 @@ export async function resetCaptchaBrowser(kind: CaptchaResetKind): Promise<void>
 export function getCaptchaBrowserStatus(): CaptchaBrowserStatus {
   return {
     ...state,
+    engine: engineAtLaunch ?? selectedEngine(),
     running: Boolean(browser?.connected && flowPage && !flowPage.isClosed()),
     pageUrl: flowPage && !flowPage.isClosed() ? flowPage.url() : null,
   };
 }
 
+export function getCaptchaEngineInfo(): { engine: CaptchaEngine; cloakAvailable: boolean; licensePresent: boolean } {
+  return {
+    engine: selectedEngine(),
+    cloakAvailable: findCloakBrowserExecutable() !== null,
+    licensePresent: hasCloakLicense(),
+  };
+}
+
+export async function setCaptchaEngine(engine: CaptchaEngine): Promise<ReturnType<typeof getCaptchaEngineInfo>> {
+  if (engine !== 'chrome' && engine !== 'cloak') throw new Error('CAPTCHA engine không hợp lệ');
+  if (engine === 'cloak' && (!findCloakBrowserExecutable() || !hasCloakLicense()))
+    throw new Error('CloakBrowser chưa được cài hoặc chưa đăng nhập khóa.');
+  if (process.env.VEO_CAPTCHA_ENGINE) throw new Error('Gỡ VEO_CAPTCHA_ENGINE trước khi đổi engine trong ứng dụng.');
+  if (launchPromise) await launchPromise.catch(() => undefined);
+  if (selectedEngine() !== engine) {
+    writeCaptchaEngine(app.getPath('userData'), engine);
+    await closeCaptchaBrowser();
+  }
+  return getCaptchaEngineInfo();
+}
+
 export async function closeCaptchaBrowser(): Promise<void> {
   shuttingDown = true;
   cleanupBrowserRefs();
-  if (chromeProcess && !chromeProcess.killed) {
-    try {
-      chromeProcess.kill('SIGTERM');
-    }
-    catch {
-      // Best-effort cleanup.
-    }
-  }
+  const child = chromeProcess;
   chromeProcess = null;
-  shuttingDown = false;
+  try { if (child) await stopBrowserProcess(child); }
+  finally { shuttingDown = false; }
 }
 
 export function shutdownCaptchaBrowser(): void {

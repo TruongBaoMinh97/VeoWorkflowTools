@@ -17,6 +17,8 @@
   "include": [
     "src/main/privateUpdateAuth.ts",
     "src/main/captchaBrowserManager.ts",
+    "src/main/captchaEngineStore.ts",
+    "src/main/cloakBrowserPath.ts",
     "src/main/captchaFrameMint.ts",
     "src/main/systemBrowserLogin.ts"
   ]
