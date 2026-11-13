@@ -17,8 +17,10 @@ export class ProfileImageScheduler {
         // Explicit user restart acknowledges verification; never erase traffic cooldown.
         this.state(profileId).verification = null;
     }
-    async run(profileId, execute, cancelled = () => false) {
+    async run(profileId, execute, cancelled = () => false, admission = null) {
         const state = this.state(profileId);
+        const limit = admission?.limit ?? this.limit;
+        const gapMs = admission?.gapMs ?? this.gapMs;
         const previous = state.tail;
         let release;
         state.tail = new Promise(resolve => { release = resolve; });
@@ -28,11 +30,11 @@ export class ProfileImageScheduler {
                 if (cancelled()) throw new Error('Run was cancelled');
                 if (state.verification) throw state.verification;
                 const wait = Math.max(state.nextAt, state.blockedUntil) - this.now();
-                if (state.active < this.limit && wait <= 0) break;
+                if (state.active < limit && wait <= 0) break;
                 await this.sleep(Math.min(100, Math.max(1, wait)));
             }
             state.active++;
-            state.nextAt = this.now() + this.gapMs;
+            state.nextAt = this.now() + gapMs;
         } finally { release(); }
         try {
             return await execute();

@@ -25,6 +25,25 @@ describe('shared image admission', () => {
         finishes[3]();
         await Promise.all(jobs);
     });
+    it('admits up to twelve Veo3 Gen image requests with one-second submit spacing', async () => {
+        vi.useFakeTimers();
+        const queue = new ProfileImageScheduler();
+        const starts = [], finishes = [];
+        const admission = { limit: 12, gapMs: 1000 };
+        const jobs = Array.from({ length: 13 }, (_, i) => queue.run('p', () => {
+            starts.push(i);
+            return new Promise(resolve => { finishes[i] = resolve; });
+        }, () => false, admission));
+        await vi.advanceTimersByTimeAsync(11000);
+        expect(starts).toHaveLength(12);
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(starts).toHaveLength(12);
+        finishes[0]();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(starts).toHaveLength(13);
+        finishes.forEach(resolve => resolve());
+        await Promise.all(jobs);
+    });
     it('stops queued work on verification rejection until explicit restart', async () => {
         vi.useFakeTimers();
         const queue = new ProfileImageScheduler();
