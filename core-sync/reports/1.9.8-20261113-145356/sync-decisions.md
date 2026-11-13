@@ -8,13 +8,13 @@
 
 | Area | Decision | Target and reason |
 | --- | --- | --- |
-| Profile image admission | Adapt | `apps/server/src/lib/profileImageScheduler.js`: the shared gate had limited all image callers to 2 in-flight requests and 5 seconds between admissions, while Studio 1.9.8's image pipeline uses a 12-request cap and 1-second minimum reCAPTCHA gap. Set the default to 12 and 1 second. Preserve verification blocking and traffic cooldown. |
-| Workflow advanced image batch | Adapt | `apps/server/src/modules/workflow/lib/imageGenerationQueue.js` and `workflow.batch.orchestrator.js`: allow up to 12 images per profile, including three overlapping four-image requests, when parallel settings are enabled. Keep the ordinary workflow queue's existing 8-image limit and its separate orchestration. |
-| Image/video provider contracts, profile sessions, CAPTCHA browser | Already applied | Existing 1.9.8 source changes and subsequent browser work remain in place. No wholesale upstream queue, IPC, extension, authentication, updater, schema, or renderer bundle was copied. |
+| Veo3 Gen image admission | Adapt | The shared `profileImageScheduler.js` retains its 2-request/5-second default for workflow callers. Veo3 Gen alone passes its existing 12-request pipeline limit and 1-second gap (2 seconds for reference images) through `genNormalQueueManager.js` and `veo3Service.js`. Preserve verification blocking and traffic cooldown. |
+| Flow image 429 classification | Adapt | `flowImageGen.js` previously replaced a gRPC `RESOURCE_EXHAUSTED` error with a generic message and lost its status and quota reason. Preserve the 429/traffic flag so Gen Normal uses its longer backoff; preserve a daily quota reason so the queue stops retrying an exhausted model. |
+| Image/video provider contracts, profile sessions, CAPTCHA browser | Already applied or intentionally local | Existing 1.9.8 source changes and subsequent browser work remain in place. VeoWorkflow keeps its profile-bound token request and user verification stop on explicit 403. Upstream proxy-triggered CAPTCHA reset was not imported; if proxy egress changes while a browser session is open, that remains a conditional integration risk to diagnose from live logs. No upstream queue, IPC, extension, authentication, updater, schema, renderer bundle, or workflow batch logic was copied. |
 
 ## Verification and delivery
 
-- Focused image queue and scheduler tests passed; `npm run typecheck` passed.
+- Focused Gen Normal, Flow 429, CAPTCHA classification, scheduler and regression tests passed (53 tests); `npm run typecheck` passed.
 - Full architecture suite: 308 passed, 1 existing Etsy preset assertion failed in `girlsPrincessDressWorkflow.test.js` against unrelated dirty preset content. An earlier parallel run also had a timing-sensitive failure; rerun left only the Etsy failure.
 - No live Flow request or packaged app test was run. This update is source-only by repository instruction; the installed VeoWorkflow app is unchanged.
 - Rollback: Git commit for the touched source and tests. Existing unrelated working-tree edits were preserved.

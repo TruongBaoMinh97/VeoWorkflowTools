@@ -2664,6 +2664,12 @@ export class GenNormalQueueManager {
                         // Call batch API with progress callback
                         batchResults = await veo3Service.generateBatchImages({
                             projectId: veo3ProjectId,
+                            imageAdmission: {
+                                limit: this.MAX_IMAGE_GEN_INFLIGHT_PER_PROFILE,
+                                gapMs: prompts.some(prompt => prompt.referenceImageMediaIds?.length)
+                                    ? this.MIN_RECAPTCHA_GAP_VIDEO_REF_MS
+                                    : this.MIN_RECAPTCHA_GAP_MS,
+                            },
                             imageModelName,
                             imageAspectRatio: imageAspectRatio,
                             prompts,
@@ -3153,6 +3159,12 @@ export class GenNormalQueueManager {
                 // Generate single image using batch API (with 1 prompt)
                 const imageResults = await veo3Service.generateBatchImages({
                     projectId: veo3ProjectId,
+                    imageAdmission: {
+                        limit: this.MAX_IMAGE_GEN_INFLIGHT_PER_PROFILE,
+                        gapMs: uniqueRefImageMediaIds.length
+                            ? this.MIN_RECAPTCHA_GAP_VIDEO_REF_MS
+                            : this.MIN_RECAPTCHA_GAP_MS,
+                    },
                     imageModelName,
                     imageAspectRatio: imageAspectRatio,
                     prompts: [{

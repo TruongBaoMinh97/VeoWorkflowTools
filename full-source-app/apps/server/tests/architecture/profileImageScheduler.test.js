@@ -5,7 +5,7 @@ afterEach(() => vi.useRealTimers());
 describe('shared image admission', () => {
     it('spaces individual images across products and caps in-flight work', async () => {
         vi.useFakeTimers();
-        const queue = new ProfileImageScheduler({ gapMs: 5000, limit: 2 });
+        const queue = new ProfileImageScheduler();
         const starts = [], finishes = [];
         const jobs = Array.from({ length: 4 }, (_, i) => queue.run('p', () => {
             starts.push(i);
@@ -25,14 +25,15 @@ describe('shared image admission', () => {
         finishes[3]();
         await Promise.all(jobs);
     });
-    it('admits up to twelve image requests with one-second submit spacing', async () => {
+    it('admits up to twelve Veo3 Gen image requests with one-second submit spacing', async () => {
         vi.useFakeTimers();
         const queue = new ProfileImageScheduler();
         const starts = [], finishes = [];
+        const admission = { limit: 12, gapMs: 1000 };
         const jobs = Array.from({ length: 13 }, (_, i) => queue.run('p', () => {
             starts.push(i);
             return new Promise(resolve => { finishes[i] = resolve; });
-        }));
+        }, () => false, admission));
         await vi.advanceTimersByTimeAsync(11000);
         expect(starts).toHaveLength(12);
         await vi.advanceTimersByTimeAsync(2000);
@@ -57,7 +58,7 @@ describe('shared image admission', () => {
         await expect(queue.run('other', () => 'ok')).resolves.toBe('ok');
         queue.resume('p');
         const retry = queue.run('p', () => 'resumed');
-        await vi.advanceTimersByTimeAsync(1000);
+        await vi.advanceTimersByTimeAsync(5000);
         expect(await retry).toBe('resumed');
     });
     it('rechecks traffic cooldown after waiting and honors Retry-After', async () => {

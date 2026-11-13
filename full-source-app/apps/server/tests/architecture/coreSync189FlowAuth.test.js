@@ -72,4 +72,15 @@ describe('Veo3Studio 1.8.9 Flow cookie-auth migration', () => {
     expect(verify.code).toBe('FLOW_VERIFICATION_REQUIRED');
     expect(verify.isNonRetryable).toBe(true);
   });
+
+  it('keeps Flow 429 traffic and quota evidence for the Gen retry policy', () => {
+    const traffic = classifyImageGenError(new FlowRpcError('ogiZ0b', 'RESOURCE_EXHAUSTED', 8));
+    expect(traffic.status).toBe(429);
+    expect(traffic.isTransientTrafficLimit).toBe(true);
+
+    const quota = classifyImageGenError(new FlowRpcError('ogiZ0b', 'PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED', 8));
+    expect(quota.message).toContain('PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED');
+    expect(quota.isNonRetryable).toBe(true);
+    expect(quota.isTransientTrafficLimit).not.toBe(true);
+  });
 });

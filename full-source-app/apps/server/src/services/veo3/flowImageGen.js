@@ -149,7 +149,13 @@ export function classifyImageGenError(err) {
         return tag(`Google tạm từ chối request (mã ${status}). Sẽ thử lại với token mới. [${err.message}]`, { isRecaptchaFailure: true }, err);
     }
     if (grpc === GRPC.RESOURCE_EXHAUSTED || status === 429) {
-        return tag('Rate limit (Mã 429): Gen quá nhanh, sẽ tự retry sau 30s.', {}, err);
+        const evidence = errorEvidence(err);
+        const quotaReason = evidence.match(/PUBLIC_ERROR_(?:PER_MODEL_DAILY_QUOTA_REACHED(?:_UPGRADEABLE)?|USER_QUOTA_REACHED)/)?.[0];
+        if (quotaReason)
+            return tag(`${quotaReason}: Tài khoản đã hết quota cho lượt gen này.`, { status: 429, isNonRetryable: true }, err);
+        const isTransientTrafficLimit = grpc === GRPC.RESOURCE_EXHAUSTED ||
+            /PUBLIC_ERROR_UNUSUAL_ACTIVITY_TOO_MUCH_TRAFFIC|RESOURCE_EXHAUSTED/.test(evidence);
+        return tag('Rate limit (Mã 429): Flow đang giới hạn tốc độ gen.', { status: 429, isTransientTrafficLimit }, err);
     }
     if (grpc === GRPC.UNAUTHENTICATED || status === 401) {
         return tag('Chưa đăng nhập Flow trên profile này. Mở Profiles → Đăng nhập lại để cấp phiên mới.', { code: 'FLOW_SIGNED_OUT' }, err);

@@ -1540,7 +1540,7 @@ export class Veo3Service {
                 const result = await generateOne(prompt, index);
                 options.completedImages?.set(index, result);
                 return result;
-            }, options.isCancelled);
+            }, options.isCancelled, options.imageAdmission);
         }));
         const results = [];
         let firstError = null;

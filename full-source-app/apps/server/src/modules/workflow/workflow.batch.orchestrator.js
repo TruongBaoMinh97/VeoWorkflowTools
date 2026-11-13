@@ -177,7 +177,7 @@ export const workflowBatchOrchestrator = {
      * queue. claimNextItem is atomic, so lanes never claim the same row.
      */
     async runProfileWorker(batch, def, schema, profileId, state, aiCreds) {
-        const lanes = singleImageWorkflow(def) ? (batch.parallelSettings ? 12 : 8) : batchProductLanes(batch, def);
+        const lanes = singleImageWorkflow(def) ? 8 : batchProductLanes(batch, def);
         const control = { drained: false };
         await Promise.all(Array.from({ length: lanes }, (_, laneIndex) => this.runProfileLane(batch, def, schema, profileId, state, aiCreds, laneIndex, control)));
     },
