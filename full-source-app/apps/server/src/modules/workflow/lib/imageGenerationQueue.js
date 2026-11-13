@@ -34,9 +34,9 @@ export class ImageGenerationQueue {
                 });
                 const job = state.pending[0];
                 const activeLimit = job?.settings
-                    ? Math.min(8, job.settings.concurrency * job.settings.burst, Math.max(1, Math.floor(8 / job.count)))
+                    ? Math.min(12, job.settings.concurrency * job.settings.burst, Math.max(1, Math.floor(12 / job.count)))
                     : 2;
-                if (job && !state.launching && state.batches < activeLimit && state.images + job.count <= 8 && Date.now() >= state.nextAt) {
+                if (job && !state.launching && state.batches < activeLimit && state.images + job.count <= (job.settings ? 12 : 8) && Date.now() >= state.nextAt) {
                     state.pending.shift();
                     state.batches++;
                     state.images += job.count;
@@ -85,7 +85,7 @@ export function batchProductLanes(batch, definition) {
         ? Number(parallel.concurrency || 1) * Number(parallel.burst || 1)
         : batch.rowsPerProfile ?? (folder ? 2 : 1);
     const imagesPerProduct = parallel ? Number(parallel.imagesPerProduct || 1) : 1;
-    const imageCapacity = Math.max(1, Math.floor(8 / imagesPerProduct));
+    const imageCapacity = Math.max(1, Math.floor((parallel ? 12 : 8) / imagesPerProduct));
     return Math.max(1, Math.min(singleImageWorkflow(definition) ? imageCapacity : 2, requested));
 }
 

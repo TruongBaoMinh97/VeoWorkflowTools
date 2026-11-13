@@ -127,7 +127,7 @@ it('applies edited lane settings when a paused product batch resumes',async()=>{
  batch.parallelSettings={...batch.parallelSettings,concurrency:2,burst:2};
  shared.paused=false;
  await vi.advanceTimersByTimeAsync(200);
- expect(process).toHaveBeenCalledTimes(2); // 2 products × 4 images = the eight-image cap
+ expect(process).toHaveBeenCalledTimes(3); // 3 products × 4 images = the twelve-image cap
  shared.cancelled=true;finishes.splice(0).forEach(resolve=>resolve());
  await vi.advanceTimersByTimeAsync(200);await work;
 });

@@ -70,9 +70,9 @@ describe('single-image advanced batches',()=>{
  it('defaults Etsy product folders to four outputs per product and validates 1–4',()=>{
   const def={nodes:[{type:'generate-image',data:{count:1}}]};expect(singleImageWorkflow(def)).toBe(true);
   expect(batchProductLanes({parallelSettings:{concurrency:2,burst:4,imagesPerProduct:1}},def)).toBe(8);
-  expect(batchProductLanes({parallelSettings:{concurrency:2,burst:4,imagesPerProduct:2}},def)).toBe(4);
-  expect(batchProductLanes({parallelSettings:{concurrency:2,burst:4,imagesPerProduct:3}},def)).toBe(2);
-  expect(batchProductLanes({parallelSettings:{concurrency:2,burst:2,imagesPerProduct:4}},def)).toBe(2);
+  expect(batchProductLanes({parallelSettings:{concurrency:2,burst:4,imagesPerProduct:2}},def)).toBe(6);
+  expect(batchProductLanes({parallelSettings:{concurrency:2,burst:4,imagesPerProduct:3}},def)).toBe(4);
+  expect(batchProductLanes({parallelSettings:{concurrency:2,burst:2,imagesPerProduct:4}},def)).toBe(3);
   expect(singleImageWorkflow({nodes:[...def.nodes,{type:'generate-video'}]})).toBe(false);
   expect(singleImageWorkflow({nodes:[{type:'generate-image',data:{count:4}}]})).toBe(true);
   expect(singleImageWorkflow({nodes:[{type:'generate-image',data:{count:5}}]})).toBe(false);
@@ -85,12 +85,13 @@ describe('single-image advanced batches',()=>{
   expect(()=>normalizeParallel({restSeconds:-1})).toThrow();
  });
 
- it('reserves four output slots for one product request instead of four product requests',async()=>{
+ it('reserves up to twelve output slots for three four-image product requests',async()=>{
   const q=new ImageGenerationQueue({tickMs:10}),started=[],waits=[];
-  const settings={imageModelKey:'GEM_PIX_2',concurrency:2,burst:4,restSeconds:10,imagesPerProduct:4};
-  const jobs=Array.from({length:3},(_,i)=>q.run('p',4,()=>false,fired=>{started.push(i);fired();const d=deferred();waits[i]=d;return d.promise},settings));
-  await vi.advanceTimersByTimeAsync(100);expect(started).toEqual([0,1]);
-  waits[0].resolve('p0');await vi.advanceTimersByTimeAsync(20);expect(started).toEqual([0,1,2]);
-  waits[1].resolve('p1');waits[2].resolve('p2');expect(await Promise.all(jobs)).toEqual(['p0','p1','p2']);
+  const settings={imageModelKey:'GEM_PIX_2',concurrency:4,burst:4,restSeconds:2,imagesPerProduct:4};
+  const jobs=Array.from({length:4},(_,i)=>q.run('p',4,()=>false,fired=>{started.push(i);fired();const d=deferred();waits[i]=d;return d.promise},settings));
+  await vi.advanceTimersByTimeAsync(100);expect(started).toEqual([0,1,2]);
+  await vi.advanceTimersByTimeAsync(1000);expect(started).toEqual([0,1,2]);
+  waits[0].resolve('p0');await vi.advanceTimersByTimeAsync(20);expect(started).toEqual([0,1,2,3]);
+  waits[1].resolve('p1');waits[2].resolve('p2');waits[3].resolve('p3');expect(await Promise.all(jobs)).toEqual(['p0','p1','p2','p3']);
  });
 });

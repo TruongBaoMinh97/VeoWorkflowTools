@@ -2,7 +2,7 @@ import { isVerificationRejected, verificationRequiredError } from '../services/v
 
 /** One admission gate for image RPCs from every caller in this server. */
 export class ProfileImageScheduler {
-    constructor({ gapMs = 5000, limit = 2, now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+    constructor({ gapMs = 1000, limit = 12, now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
         this.states = new Map();
         this.gapMs = gapMs;
         this.limit = limit;
